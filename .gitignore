@@ -1,0 +1,21 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfplan
+terraform/.terraform.lock.hcl
+terraform/plan_output.log
+terraform/plan_output.md
+terraform/apply_output.log
+
+# Node.js
+control-plane-api/node_modules/
+control-plane-api/npm-debug.log
+
+# Environment
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

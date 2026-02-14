@@ -1,0 +1,17 @@
+{
+  "name": "sovereign-vpn-control-plane",
+  "version": "1.0.0",
+  "description": "Serverless control plane API for Sovereign VPN — manages WireGuard peer provisioning",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
