@@ -1,6 +1,5 @@
 const express = require('express');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -30,89 +29,84 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/peers — Provision a new WireGuard peer
-// Returns a complete client config (ready for Android/desktop import)
+// POST /api/peers — Zero-Trust peer provisioning
+//
+// The client generates its own keypair locally and sends ONLY the public key.
+// The server NEVER sees the client's private key.
+//
+// Request:  { "name": "Device Name", "publicKey": "CLIENT_BASE64_PUBKEY" }
+// Response: Server public key, endpoint, assigned IP, preshared key, DNS
+//           → Client assembles its own WireGuard config locally.
 // ---------------------------------------------------------------------------
 app.post('/api/peers', (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
+    const { name, publicKey } = req.body;
+
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({ error: 'Peer name is required' });
     }
 
-    // Generate client keypair using Node crypto (Curve25519)
-    const clientPrivateKey = crypto.generateKeyPairSync('x25519');
-    const privKeyDer = clientPrivateKey.privateKey.export({ type: 'pkcs8', format: 'der' });
-    const pubKeyDer = clientPrivateKey.publicKey.export({ type: 'spki', format: 'der' });
+    if (!publicKey || typeof publicKey !== 'string') {
+      return res.status(400).json({ error: 'Client public key (base64) is required' });
+    }
 
-    // Extract raw 32-byte keys from DER encoding
-    const privateKeyBase64 = privKeyDer.subarray(-32).toString('base64');
-    const publicKeyBase64 = pubKeyDer.subarray(-32).toString('base64');
+    // Validate base64 key is 44 chars (32 bytes base64-encoded)
+    const keyBuffer = Buffer.from(publicKey, 'base64');
+    if (keyBuffer.length !== 32) {
+      return res.status(400).json({
+        error: 'Invalid public key: must be 32 bytes (Curve25519)',
+      });
+    }
 
-    // Assign IP
+    // Reject duplicate registrations
+    if (peers.has(publicKey)) {
+      return res.status(409).json({ error: 'Peer with this public key already exists' });
+    }
+
+    // Assign internal VPN IP
     const clientIP = `${VPN_SUBNET}.${nextIP}`;
     nextIP++;
 
-    // Generate pre-shared key for additional security layer
+    // Generate pre-shared key (symmetric, for post-quantum defense-in-depth)
     const presharedKey = crypto.randomBytes(32).toString('base64');
 
-    // Store peer info
+    // Store peer
     const peer = {
-      name,
-      publicKey: publicKeyBase64,
+      name: name.trim(),
+      publicKey,
       assignedIP: `${clientIP}/32`,
       presharedKey,
       createdAt: new Date().toISOString(),
     };
-    peers.set(publicKeyBase64, peer);
+    peers.set(publicKey, peer);
 
-    // Generate client config for import (Android / desktop)
-    const clientConfig = `[Interface]
-PrivateKey = ${privateKeyBase64}
-Address = ${clientIP}/32
-DNS = ${DNS_SERVERS}
-
-[Peer]
-PublicKey = ${SERVER_PUBLIC_KEY}
-PresharedKey = ${presharedKey}
-Endpoint = ${SERVER_ENDPOINT}
-AllowedIPs = 0.0.0.0/0, ::/0
-PersistentKeepalive = 25
-`;
-
-    // Peer config to add to server (would be sent via SSH in production)
-    const serverPeerBlock = `
-[Peer]
-# ${name}
-PublicKey = ${publicKeyBase64}
-PresharedKey = ${presharedKey}
-AllowedIPs = ${clientIP}/32
-`;
-
+    // Return everything the client needs to build its own config
+    // NOTE: No private key ever leaves the client device
     res.status(201).json({
-      message: `Peer "${name}" provisioned successfully`,
+      message: `Peer "${peer.name}" registered`,
       peer: {
-        name,
-        publicKey: publicKeyBase64,
+        name: peer.name,
         assignedIP: `${clientIP}/32`,
         createdAt: peer.createdAt,
       },
-      clientConfig,
-      serverPeerBlock,
-      instructions: {
-        android: 'Import clientConfig as a .conf file in the WireGuard Android app',
-        desktop: 'Save clientConfig as wg-client.conf and run: wg-quick up ./wg-client.conf',
-        server: 'Append serverPeerBlock to /etc/wireguard/wg0.conf and run: wg syncconf wg0 <(wg-quick strip wg0)',
+      serverConfig: {
+        serverPublicKey: SERVER_PUBLIC_KEY,
+        endpoint: SERVER_ENDPOINT,
+        presharedKey,
+        dns: DNS_SERVERS,
+        allowedIPs: '0.0.0.0/0, ::/0',
+        persistentKeepalive: 25,
       },
+      serverPeerBlock: `\n[Peer]\n# ${peer.name}\nPublicKey = ${publicKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIP}/32\n`,
     });
   } catch (err) {
-    console.error('Peer creation error:', err);
-    res.status(500).json({ error: 'Failed to create peer', details: err.message });
+    console.error('Peer registration error:', err);
+    res.status(500).json({ error: 'Failed to register peer', details: err.message });
   }
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/peers — List all active peers
+// GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
 app.get('/api/peers', (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
@@ -122,10 +116,7 @@ app.get('/api/peers', (_req, res) => {
     createdAt,
   }));
 
-  res.status(200).json({
-    count: peerList.length,
-    peers: peerList,
-  });
+  res.status(200).json({ count: peerList.length, peers: peerList });
 });
 
 // ---------------------------------------------------------------------------
@@ -155,5 +146,5 @@ app.delete('/api/peers/:publicKey', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Control Plane API listening on port ${PORT}`);
-  console.log(`Server endpoint: ${SERVER_ENDPOINT}`);
+  console.log(`Zero-Trust mode: clients generate their own keys`);
 });
