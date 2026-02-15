@@ -105,7 +105,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
     // Also ensure IP forwarding and NAT (idempotent)
     await sshExec([
       'sudo sysctl -q -w net.ipv4.ip_forward=1',
-      `sudo iptables -t nat -C POSTROUTING -s ${VPN_SUBNET}.0/24 -o eth0 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -s ${VPN_SUBNET}.0/24 -o eth0 -j MASQUERADE`,
+      `sudo iptables -t nat -C POSTROUTING -s ${VPN_SUBNET}.0/24 -o ens4 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -s ${VPN_SUBNET}.0/24 -o ens4 -j MASQUERADE`,
     ].join(' && '));
 
     return { success: true };
