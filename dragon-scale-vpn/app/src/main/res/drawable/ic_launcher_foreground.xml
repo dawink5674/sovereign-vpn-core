@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Shield shape for VPN app -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24L30,34v16c0,14.4 10.2,27.8 24,31 13.8,-3.2 24,-16.6 24,-31V34L54,24z"/>
+    <!-- Dragon scale pattern -->
+    <path
+        android:fillColor="#1B5E20"
+        android:pathData="M54,28L34,36.7v13.3c0,12 8.5,23.2 20,25.9 11.5,-2.7 20,-13.9 20,-25.9V36.7L54,28z"/>
+    <!-- Inner diamond -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M54,40l-10,8 10,12 10,-12z"/>
+</vector>
