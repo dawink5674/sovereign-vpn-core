@@ -49,6 +49,17 @@ class EncryptedPrefs(context: Context) {
             .apply()
     }
 
+    fun storeServerConfig(serverPublicKey: String, endpoint: String) {
+        prefs.edit()
+            .putString(KEY_SERVER_PUBLIC_KEY, serverPublicKey)
+            .putString(KEY_SERVER_ENDPOINT, endpoint)
+            .apply()
+    }
+
+    fun getServerPublicKey(): String? = prefs.getString(KEY_SERVER_PUBLIC_KEY, null)
+
+    fun getServerEndpoint(): String? = prefs.getString(KEY_SERVER_ENDPOINT, null)
+
     fun getPresharedKey(): String? = prefs.getString(KEY_PRESHARED, null)
 
     fun getAssignedIP(): String? = prefs.getString(KEY_ASSIGNED_IP, null)
@@ -63,5 +74,7 @@ class EncryptedPrefs(context: Context) {
         private const val KEY_PUBLIC = "wg_public_key"
         private const val KEY_PRESHARED = "wg_preshared_key"
         private const val KEY_ASSIGNED_IP = "wg_assigned_ip"
+        private const val KEY_SERVER_PUBLIC_KEY = "wg_server_public_key"
+        private const val KEY_SERVER_ENDPOINT = "wg_server_endpoint"
     }
 }

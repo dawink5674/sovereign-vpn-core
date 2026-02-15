@@ -20,7 +20,7 @@ android {
 
         // Control Plane API base URL
         buildConfigField("String", "API_BASE_URL",
-            "\"https://vpn-control-plane-vqkyeuhxnq-uc.a.run.app\"")
+            "\"https://vpn-control-plane-vqkyeuhxnq-uc.a.run.app/\"")
     }
 
     buildTypes {

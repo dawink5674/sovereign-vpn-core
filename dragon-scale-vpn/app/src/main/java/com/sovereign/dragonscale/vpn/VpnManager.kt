@@ -50,39 +50,66 @@ class VpnManager(private val context: Context) {
      * Register this device with the Control Plane API.
      * Generates a keypair if one doesn't exist, then sends the public key.
      *
+     * If the server returns 409 (duplicate key), the client rotates its
+     * keypair and retries once with a fresh public key.
+     *
      * @return ServerConfig with everything needed to build the tunnel config.
      */
     suspend fun registerDevice(deviceName: String): Result<ServerConfig> {
         return withContext(Dispatchers.IO) {
             try {
-                // Generate or retrieve keypair
-                val publicKey = if (cryptoManager.hasKeyPair()) {
-                    cryptoManager.getPublicKey()!!
-                } else {
-                    cryptoManager.generateAndStoreKeyPair()
+                val result = attemptRegistration(deviceName)
+
+                // If we hit a 409 Conflict (duplicate key), rotate keys and retry once
+                if (result.isFailure) {
+                    val msg = result.exceptionOrNull()?.message ?: ""
+                    if (msg.contains("409")) {
+                        cryptoManager.clearKeys()
+                        return@withContext attemptRegistration(deviceName)
+                    }
                 }
 
-                // Register with API — only public key is sent
-                val response = ApiClient.vpnApi.registerPeer(
-                    PeerRegistrationRequest(name = deviceName, publicKey = publicKey)
-                )
-
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-
-                    // Store server-provided config locally
-                    encryptedPrefs.storePeerConfig(
-                        presharedKey = body.serverConfig.presharedKey,
-                        assignedIP = body.peer.assignedIP
-                    )
-
-                    Result.success(body.serverConfig)
-                } else {
-                    Result.failure(Exception("Registration failed: ${response.code()} ${response.message()}"))
-                }
+                result
             } catch (e: Exception) {
                 Result.failure(e)
             }
+        }
+    }
+
+    /**
+     * Single registration attempt against the API.
+     */
+    private suspend fun attemptRegistration(deviceName: String): Result<ServerConfig> {
+        // Generate or retrieve keypair
+        val publicKey = if (cryptoManager.hasKeyPair()) {
+            cryptoManager.getPublicKey()!!
+        } else {
+            cryptoManager.generateAndStoreKeyPair()
+        }
+
+        // Register with API — only public key is sent
+        val response = ApiClient.vpnApi.registerPeer(
+            PeerRegistrationRequest(name = deviceName, publicKey = publicKey)
+        )
+
+        return if (response.isSuccessful && response.body() != null) {
+            val body = response.body()!!
+
+            // Store server-provided config locally
+            encryptedPrefs.storePeerConfig(
+                presharedKey = body.serverConfig.presharedKey,
+                assignedIP = body.peer.assignedIP
+            )
+
+            // Persist server public key and endpoint from the actual response
+            encryptedPrefs.storeServerConfig(
+                serverPublicKey = body.serverConfig.serverPublicKey,
+                endpoint = body.serverConfig.endpoint
+            )
+
+            Result.success(body.serverConfig)
+        } else {
+            Result.failure(Exception("Registration failed: ${response.code()} ${response.message()}"))
         }
     }
 
@@ -94,9 +121,11 @@ class VpnManager(private val context: Context) {
         val assignedIP = encryptedPrefs.getAssignedIP() ?: return null
         val presharedKey = encryptedPrefs.getPresharedKey() ?: return null
 
-        // These would come from stored server config in production
-        val serverPublicKey = "G1ReQCSgRG/MdfF5/SMrcnU+lKQMlwkr9aIA7/ZK5WI="
-        val serverEndpoint = "35.206.67.49:51820"
+        // Use persisted server config from registration response
+        val serverPublicKey = encryptedPrefs.getServerPublicKey()
+            ?: "G1ReQCSgRG/MdfF5/SMrcnU+lKQMlwkr9aIA7/ZK5WI="  // fallback
+        val serverEndpoint = encryptedPrefs.getServerEndpoint()
+            ?: "35.206.67.49:51820"  // fallback
 
         val wgInterface = Interface.Builder()
             .parsePrivateKey(privateKey)
