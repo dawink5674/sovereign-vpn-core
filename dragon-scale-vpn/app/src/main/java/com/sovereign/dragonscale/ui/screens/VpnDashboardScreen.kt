@@ -1,6 +1,7 @@
 package com.sovereign.dragonscale.ui.screens
 
 import android.app.Activity
+import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -37,7 +38,9 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VpnDashboardScreen() {
+fun VpnDashboardScreen(
+    onRequestVpnPermission: ((Intent, (Boolean) -> Unit) -> Unit)? = null
+) {
     val context = LocalContext.current
     val vpnManager = remember { VpnManager(context) }
     val scope = rememberCoroutineScope()
@@ -46,6 +49,72 @@ fun VpnDashboardScreen() {
     var statusMessage by remember { mutableStateOf("Disconnected") }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
     var logEntries by remember { mutableStateOf(listOf<LogEntry>()) }
+
+    // Shared connect logic — used by both expanded and folded layouts
+    val handleConnect: () -> Unit = {
+        val prepareIntent = vpnManager.prepareVpn(context as Activity)
+        if (prepareIntent != null) {
+            // VPN permission not yet granted — launch the system consent dialog
+            logEntries = logEntries + LogEntry("Requesting VPN permission...")
+            statusMessage = "Requesting permission..."
+            if (onRequestVpnPermission != null) {
+                onRequestVpnPermission(prepareIntent) { granted ->
+                    if (granted) {
+                        logEntries = logEntries + LogEntry("VPN permission granted")
+                        // Now proceed with tunnel toggle
+                        scope.launch {
+                            statusMessage = "Connecting..."
+                            logEntries = logEntries + LogEntry("Initiating tunnel...")
+                            val result = vpnManager.toggleTunnel()
+                            if (result.isSuccess) {
+                                vpnState = result.getOrNull()!!
+                                statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
+                                logEntries = logEntries + LogEntry("Tunnel state: $vpnState")
+                            } else {
+                                statusMessage = "Error: ${result.exceptionOrNull()?.message}"
+                                logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+                            }
+                        }
+                    } else {
+                        statusMessage = "VPN permission denied"
+                        logEntries = logEntries + LogEntry("ERROR: VPN permission denied by user")
+                    }
+                }
+            }
+        } else {
+            // Permission already granted — toggle tunnel directly
+            scope.launch {
+                statusMessage = "Connecting..."
+                logEntries = logEntries + LogEntry("Initiating tunnel...")
+                val result = vpnManager.toggleTunnel()
+                if (result.isSuccess) {
+                    vpnState = result.getOrNull()!!
+                    statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
+                    logEntries = logEntries + LogEntry("Tunnel state: $vpnState")
+                } else {
+                    statusMessage = "Error: ${result.exceptionOrNull()?.message}"
+                    logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+                }
+            }
+        }
+    }
+
+    // Shared register logic
+    val handleRegister: () -> Unit = {
+        scope.launch {
+            statusMessage = "Registering..."
+            logEntries = logEntries + LogEntry("Registering device...")
+            val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
+            if (result.isSuccess) {
+                isRegistered = true
+                statusMessage = "Registered — Ready"
+                logEntries = logEntries + LogEntry("Device registered with server")
+            } else {
+                statusMessage = "Registration failed"
+                logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
 
     // Detect foldable posture
     val windowInfo = currentWindowAdaptiveInfo()
@@ -92,43 +161,8 @@ fun VpnDashboardScreen() {
                         vpnState = vpnState,
                         statusMessage = statusMessage,
                         isRegistered = isRegistered,
-                        onRegister = {
-                            scope.launch {
-                                statusMessage = "Registering..."
-                                val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
-                                if (result.isSuccess) {
-                                    isRegistered = true
-                                    statusMessage = "Registered — Ready"
-                                    logEntries = logEntries + LogEntry("Device registered with server")
-                                } else {
-                                    statusMessage = "Registration failed"
-                                    logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
-                                }
-                            }
-                        },
-                        onToggle = {
-                            // Request VPN permission if needed
-                            val prepareIntent = vpnManager.prepareVpn(context as Activity)
-                            if (prepareIntent != null) {
-                                logEntries = logEntries + LogEntry("Requesting VPN permission...")
-                                // In production, launch intent for result
-                                return@ConnectionPanel
-                            }
-
-                            scope.launch {
-                                statusMessage = "Connecting..."
-                                logEntries = logEntries + LogEntry("Initiating tunnel...")
-                                val result = vpnManager.toggleTunnel()
-                                if (result.isSuccess) {
-                                    vpnState = result.getOrNull()!!
-                                    statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                                    logEntries = logEntries + LogEntry("Tunnel state: $vpnState")
-                                } else {
-                                    statusMessage = "Error: ${result.exceptionOrNull()?.message}"
-                                    logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
-                                }
-                            }
-                        }
+                        onRegister = handleRegister,
+                        onToggle = handleConnect
                     )
                 }
 
@@ -155,33 +189,8 @@ fun VpnDashboardScreen() {
                     vpnState = vpnState,
                     statusMessage = statusMessage,
                     isRegistered = isRegistered,
-                    onRegister = {
-                        scope.launch {
-                            statusMessage = "Registering..."
-                            val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
-                            if (result.isSuccess) {
-                                isRegistered = true
-                                statusMessage = "Registered — Ready"
-                            } else {
-                                statusMessage = "Registration failed"
-                            }
-                        }
-                    },
-                    onToggle = {
-                        val prepareIntent = vpnManager.prepareVpn(context as Activity)
-                        if (prepareIntent != null) return@ConnectionPanel
-
-                        scope.launch {
-                            statusMessage = "Connecting..."
-                            val result = vpnManager.toggleTunnel()
-                            if (result.isSuccess) {
-                                vpnState = result.getOrNull()!!
-                                statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                            } else {
-                                statusMessage = "Error"
-                            }
-                        }
-                    }
+                    onRegister = handleRegister,
+                    onToggle = handleConnect
                 )
             }
         }
