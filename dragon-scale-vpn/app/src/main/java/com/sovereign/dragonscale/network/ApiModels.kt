@@ -18,15 +18,28 @@ data class HealthResponse(
     val timestamp: String
 )
 
+/**
+ * Peer registration response — supports BOTH the live deployed format
+ * (which returns clientConfig as a flat .conf string) and the local
+ * index.js format (which returns a structured serverConfig object).
+ */
 data class PeerRegistrationResponse(
     val message: String,
     val peer: PeerInfo,
-    val serverConfig: ServerConfig,
-    val serverPeerBlock: String
+
+    // Live deployed server returns this — a full WireGuard .conf string
+    val clientConfig: String? = null,
+
+    // Local index.js returns this — a structured object
+    val serverConfig: ServerConfig? = null,
+
+    val serverPeerBlock: String? = null,
+    val instructions: Instructions? = null
 )
 
 data class PeerInfo(
     val name: String,
+    val publicKey: String? = null,
     val assignedIP: String,
     val createdAt: String
 )
@@ -38,6 +51,12 @@ data class ServerConfig(
     val dns: String,
     val allowedIPs: String,
     val persistentKeepalive: Int
+)
+
+data class Instructions(
+    val android: String? = null,
+    val desktop: String? = null,
+    val server: String? = null
 )
 
 data class PeerListResponse(

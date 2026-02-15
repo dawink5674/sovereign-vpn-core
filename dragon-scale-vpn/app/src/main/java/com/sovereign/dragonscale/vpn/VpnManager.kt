@@ -9,6 +9,7 @@ import com.sovereign.dragonscale.crypto.CryptoManager
 import com.sovereign.dragonscale.crypto.EncryptedPrefs
 import com.sovereign.dragonscale.network.ApiClient
 import com.sovereign.dragonscale.network.PeerRegistrationRequest
+import com.sovereign.dragonscale.network.PeerRegistrationResponse
 import com.sovereign.dragonscale.network.ServerConfig
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
@@ -49,6 +50,10 @@ class VpnManager(private val context: Context) {
     /**
      * Register this device with the Control Plane API.
      * Generates a keypair if one doesn't exist, then sends the public key.
+     *
+     * Supports two server response formats:
+     * - Live server: returns clientConfig (flat WireGuard .conf string)
+     * - Local server: returns serverConfig (structured JSON object)
      *
      * If the server returns 409 (duplicate key), the client rotates its
      * keypair and retries once with a fresh public key.
@@ -92,25 +97,79 @@ class VpnManager(private val context: Context) {
             PeerRegistrationRequest(name = deviceName, publicKey = publicKey)
         )
 
-        return if (response.isSuccessful && response.body() != null) {
-            val body = response.body()!!
-
-            // Store server-provided config locally
-            encryptedPrefs.storePeerConfig(
-                presharedKey = body.serverConfig.presharedKey,
-                assignedIP = body.peer.assignedIP
+        if (!response.isSuccessful || response.body() == null) {
+            return Result.failure(
+                Exception("Registration failed: ${response.code()} ${response.message()}")
             )
-
-            // Persist server public key and endpoint from the actual response
-            encryptedPrefs.storeServerConfig(
-                serverPublicKey = body.serverConfig.serverPublicKey,
-                endpoint = body.serverConfig.endpoint
-            )
-
-            Result.success(body.serverConfig)
-        } else {
-            Result.failure(Exception("Registration failed: ${response.code()} ${response.message()}"))
         }
+
+        val body = response.body()!!
+
+        // Parse the response — support both live and local server formats
+        val serverConfig = extractServerConfig(body)
+            ?: return Result.failure(Exception("No usable config in server response"))
+
+        // Store server-provided config locally
+        encryptedPrefs.storePeerConfig(
+            presharedKey = serverConfig.presharedKey,
+            assignedIP = body.peer.assignedIP
+        )
+
+        // Persist server public key and endpoint
+        encryptedPrefs.storeServerConfig(
+            serverPublicKey = serverConfig.serverPublicKey,
+            endpoint = serverConfig.endpoint
+        )
+
+        // If the live server sent us a private key via clientConfig,
+        // store it (overrides client-generated key with server-generated one)
+        body.clientConfig?.let { conf ->
+            parseConfValue(conf, "PrivateKey")?.let { serverPrivateKey ->
+                encryptedPrefs.storePrivateKey(serverPrivateKey)
+            }
+        }
+
+        return Result.success(serverConfig)
+    }
+
+    /**
+     * Extract a ServerConfig from the API response.
+     *
+     * Strategy:
+     * 1. If serverConfig object exists (local index.js format), use it directly
+     * 2. If clientConfig string exists (live server format), parse the .conf
+     */
+    private fun extractServerConfig(body: PeerRegistrationResponse): ServerConfig? {
+        // Prefer structured serverConfig if available
+        body.serverConfig?.let { return it }
+
+        // Parse clientConfig WireGuard .conf string
+        val conf = body.clientConfig ?: return null
+
+        val serverPublicKey = parseConfValue(conf, "PublicKey") ?: return null
+        val endpoint = parseConfValue(conf, "Endpoint") ?: return null
+        val presharedKey = parseConfValue(conf, "PresharedKey") ?: return null
+        val dns = parseConfValue(conf, "DNS") ?: "1.1.1.1, 1.0.0.1"
+        val allowedIPs = parseConfValue(conf, "AllowedIPs") ?: "0.0.0.0/0, ::/0"
+        val keepalive = parseConfValue(conf, "PersistentKeepalive")?.toIntOrNull() ?: 25
+
+        return ServerConfig(
+            serverPublicKey = serverPublicKey,
+            endpoint = endpoint,
+            presharedKey = presharedKey,
+            dns = dns,
+            allowedIPs = allowedIPs,
+            persistentKeepalive = keepalive
+        )
+    }
+
+    /**
+     * Parse a value from a WireGuard .conf format string.
+     * e.g. parseConfValue("[Peer]\nPublicKey = abc123\n", "PublicKey") → "abc123"
+     */
+    private fun parseConfValue(conf: String, key: String): String? {
+        val regex = Regex("""(?m)^\s*$key\s*=\s*(.+)\s*$""")
+        return regex.find(conf)?.groupValues?.get(1)?.trim()
     }
 
     /**
