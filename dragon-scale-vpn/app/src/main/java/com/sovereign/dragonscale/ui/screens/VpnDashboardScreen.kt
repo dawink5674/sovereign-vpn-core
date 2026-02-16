@@ -45,8 +45,12 @@ fun VpnDashboardScreen(
     val vpnManager = remember { VpnManager(context) }
     val scope = rememberCoroutineScope()
 
-    var vpnState by remember { mutableStateOf(Tunnel.State.DOWN) }
-    var statusMessage by remember { mutableStateOf("Disconnected") }
+    // Query actual tunnel state — survives fold/unfold and activity recreation
+    val initialState = remember { vpnManager.getTunnelState() }
+    var vpnState by remember { mutableStateOf(initialState) }
+    var statusMessage by remember {
+        mutableStateOf(if (initialState == Tunnel.State.UP) "Connected" else "Disconnected")
+    }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
     var logEntries by remember { mutableStateOf(listOf<LogEntry>()) }
 

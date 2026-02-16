@@ -37,7 +37,10 @@ class VpnManager(private val context: Context) {
     private val cryptoManager = CryptoManager(encryptedPrefs)
     private val backend: GoBackend get() = DragonScaleApp.get(context).backend
 
-    private var currentTunnel: DragonScaleTunnel? = null
+    companion object {
+        // Persists across activity recreations (fold changes, rotation)
+        private var currentTunnel: DragonScaleTunnel? = null
+    }
 
     /**
      * Check if the VPN permission has been granted.
