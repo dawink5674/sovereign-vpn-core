@@ -71,7 +71,7 @@ fun ThreatMapPanel(
             )
             if (isConnected && userLocation != null) {
                 Text(
-                    "${userLocation?.query} → $serverIp",
+                    "${userLocation?.ip} → $serverIp",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 10.sp
@@ -103,9 +103,9 @@ fun ThreatMapPanel(
                             .align(Alignment.BottomStart)
                             .padding(12.dp)
                     ) {
-                        LocationChip("YOU", userLocation!!.city, userLocation!!.country, DragonCyan)
+                        LocationChip("YOU", userLocation!!.city, userLocation!!.country_name, DragonCyan)
                         Spacer(Modifier.height(4.dp))
-                        LocationChip("EXIT", serverLocation!!.city, serverLocation!!.country, StatusConnected)
+                        LocationChip("EXIT", serverLocation!!.city, serverLocation!!.country_name, StatusConnected)
                     }
                 }
 
@@ -193,8 +193,8 @@ private fun ThreatMapCanvas(
 
         // --- Connection arc + nodes ---
         if (isConnected && userGeo != null && serverGeo != null) {
-            val userPt = geoToScreen(userGeo.lat, userGeo.lon, w, h)
-            val serverPt = geoToScreen(serverGeo.lat, serverGeo.lon, w, h)
+            val userPt = geoToScreen(userGeo.latitude, userGeo.longitude, w, h)
+            val serverPt = geoToScreen(serverGeo.latitude, serverGeo.longitude, w, h)
 
             drawConnectionArc(userPt, serverPt, arcProgress)
             drawPulsingNode(userPt, DragonCyan, pulseRadius, pulseAlpha)

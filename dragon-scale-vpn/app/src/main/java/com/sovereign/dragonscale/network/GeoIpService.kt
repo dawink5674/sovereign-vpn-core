@@ -10,18 +10,18 @@ import retrofit2.http.Path
  * Used for the SOC-style threat map.
  */
 data class GeoIpResponse(
-    val status: String,
-    val country: String = "",
-    val regionName: String = "",
+    val ip: String = "",
+    val country_name: String = "",
+    val region: String = "",
     val city: String = "",
-    val lat: Double = 0.0,
-    val lon: Double = 0.0,
-    val isp: String = "",
-    val query: String = ""   // the IP address
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val org: String = "",
+    val error: Boolean = false
 )
 
 interface GeoIpApi {
-    @GET("json/{ip}")
+    @GET("{ip}/json/")
     suspend fun lookup(@Path("ip") ip: String): GeoIpResponse
 
     @GET("json/")
@@ -31,7 +31,7 @@ interface GeoIpApi {
 object GeoIpClient {
     val api: GeoIpApi by lazy {
         Retrofit.Builder()
-            .baseUrl("http://ip-api.com/")
+            .baseUrl("https://ipapi.co/")
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(GeoIpApi::class.java)

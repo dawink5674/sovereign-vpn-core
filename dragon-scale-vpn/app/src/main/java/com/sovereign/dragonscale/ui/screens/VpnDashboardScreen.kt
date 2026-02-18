@@ -1,6 +1,8 @@
 package com.sovereign.dragonscale.ui.screens
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -64,7 +66,7 @@ fun VpnDashboardScreen(
 ) {
     val context = LocalContext.current
     val vpnManager = remember { VpnManager(context) }
-    val networkMonitor = remember { NetworkMonitor(context) }
+    val networkMonitor = remember { NetworkMonitor(context.applicationContext) }
     val scope = rememberCoroutineScope()
 
     // Query actual tunnel state — survives fold/unfold and activity recreation
@@ -92,50 +94,29 @@ fun VpnDashboardScreen(
         manualLogs = manualLogs + LogEntry(msg, type)
     }
 
-    // Shared connect logic
-    val handleConnect: () -> Unit = {
-        val prepareIntent = vpnManager.prepareVpn(context as Activity)
-        if (prepareIntent != null) {
-            addLog("Requesting VPN permission...", LogType.INFO)
-            statusMessage = "Requesting permission..."
-            if (onRequestVpnPermission != null) {
-                onRequestVpnPermission(prepareIntent) { granted ->
-                    if (granted) {
-                        addLog("VPN permission granted", LogType.INFO)
-                        scope.launch {
-                            statusMessage = "Connecting..."
-                            addLog("Initiating tunnel...", LogType.INFO)
-                            val result = vpnManager.toggleTunnel()
-                            if (result.isSuccess) {
-                                vpnState = result.getOrNull()!!
-                                statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                                addLog("Tunnel state: $vpnState", LogType.INFO)
-                                if (vpnState == Tunnel.State.UP) {
-                                    vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
-                                } else {
-                                    networkMonitor.stopMonitoring()
-                                }
-                            } else {
-                                statusMessage = "Error: ${result.exceptionOrNull()?.message}"
-                                addLog("ERROR: ${result.exceptionOrNull()?.message}", LogType.ERROR)
-                            }
-                        }
-                    } else {
-                        statusMessage = "VPN permission denied"
-                        addLog("VPN permission denied by user", LogType.ERROR)
-                    }
-                }
-            }
-        } else {
-            scope.launch {
+    // Helper to safely find the Activity from any Context wrapper
+    fun Context.findActivity(): Activity? {
+        var ctx = this
+        while (ctx is ContextWrapper) {
+            if (ctx is Activity) return ctx
+            ctx = ctx.baseContext
+        }
+        return null
+    }
+
+    // Shared tunnel toggle with error handling
+    fun doToggle() {
+        scope.launch {
+            try {
                 statusMessage = "Connecting..."
                 addLog("Initiating tunnel...", LogType.INFO)
                 val result = vpnManager.toggleTunnel()
                 if (result.isSuccess) {
-                    vpnState = result.getOrNull()!!
-                    statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                    addLog("Tunnel state: $vpnState", LogType.INFO)
-                    if (vpnState == Tunnel.State.UP) {
+                    val newState = result.getOrNull() ?: Tunnel.State.DOWN
+                    vpnState = newState
+                    statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Disconnected"
+                    addLog("Tunnel state: $newState", LogType.INFO)
+                    if (newState == Tunnel.State.UP) {
                         vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
                     } else {
                         networkMonitor.stopMonitoring()
@@ -145,7 +126,44 @@ fun VpnDashboardScreen(
                     statusMessage = "Error: ${result.exceptionOrNull()?.message}"
                     addLog("ERROR: ${result.exceptionOrNull()?.message}", LogType.ERROR)
                 }
+            } catch (e: Exception) {
+                statusMessage = "Error: ${e.message}"
+                addLog("CRASH prevented: ${e.message}", LogType.ERROR)
             }
+        }
+    }
+
+    // Shared connect logic
+    val handleConnect: () -> Unit = {
+        try {
+            val activity = context.findActivity()
+            if (activity == null) {
+                statusMessage = "Error: no activity context"
+                addLog("ERROR: Could not find Activity", LogType.ERROR)
+            } else {
+                val prepareIntent = vpnManager.prepareVpn(activity)
+                if (prepareIntent != null) {
+                    addLog("Requesting VPN permission...", LogType.INFO)
+                    statusMessage = "Requesting permission..."
+                    if (onRequestVpnPermission != null) {
+                        onRequestVpnPermission(prepareIntent) { granted ->
+                            if (granted) {
+                                addLog("VPN permission granted", LogType.INFO)
+                                doToggle()
+                            } else {
+                                statusMessage = "VPN permission denied"
+                                addLog("VPN permission denied by user", LogType.ERROR)
+                            }
+                        }
+                    }
+                } else {
+                    // Permission already granted
+                    doToggle()
+                }
+            }
+        } catch (e: Exception) {
+            statusMessage = "Error: ${e.message}"
+            addLog("CRASH prevented: ${e.message}", LogType.ERROR)
         }
     }
 
