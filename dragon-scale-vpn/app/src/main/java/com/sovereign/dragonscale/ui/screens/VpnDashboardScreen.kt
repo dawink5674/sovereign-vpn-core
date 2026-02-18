@@ -9,28 +9,49 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.window.core.layout.WindowWidthSizeClass
 import com.sovereign.dragonscale.ui.theme.*
+import com.sovereign.dragonscale.vpn.NetworkMonitor
 import com.sovereign.dragonscale.vpn.VpnManager
 import com.wireguard.android.backend.Tunnel
 import kotlinx.coroutines.launch
+
+// ---------------------------------------------------------------------------
+// Log entry types — color-coded
+// ---------------------------------------------------------------------------
+
+enum class LogType { INFO, ERROR, TRAFFIC, NETWORK, DNS }
+
+data class LogEntry(
+    val message: String,
+    val type: LogType = LogType.INFO,
+    val timestamp: String = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+        .format(java.util.Date())
+)
+
+// Folded navigation destinations
+enum class FoldedPage { CONNECTION, TUNNEL_STATUS, ROUTING_LOG, THREAT_MAP }
 
 // ---------------------------------------------------------------------------
 // Dashboard Screen — adaptive for Pixel 10 Pro Fold
@@ -43,6 +64,7 @@ fun VpnDashboardScreen(
 ) {
     val context = LocalContext.current
     val vpnManager = remember { VpnManager(context) }
+    val networkMonitor = remember { NetworkMonitor(context) }
     val scope = rememberCoroutineScope()
 
     // Query actual tunnel state — survives fold/unfold and activity recreation
@@ -52,52 +74,76 @@ fun VpnDashboardScreen(
         mutableStateOf(if (initialState == Tunnel.State.UP) "Connected" else "Disconnected")
     }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
-    var logEntries by remember { mutableStateOf(listOf<LogEntry>()) }
 
-    // Shared connect logic — used by both expanded and folded layouts
+    // Collect network monitor flows
+    val monitorLogs by networkMonitor.logs.collectAsState()
+    val rxBytes by networkMonitor.rxBytes.collectAsState()
+    val txBytes by networkMonitor.txBytes.collectAsState()
+    val rxRate by networkMonitor.rxRate.collectAsState()
+    val txRate by networkMonitor.txRate.collectAsState()
+    val networkType by networkMonitor.networkType.collectAsState()
+    val lastHandshake by networkMonitor.lastHandshake.collectAsState()
+
+    // Merged log: monitor logs + manual log entries
+    var manualLogs by remember { mutableStateOf(listOf<LogEntry>()) }
+    val allLogs = remember(monitorLogs, manualLogs) { (manualLogs + monitorLogs).sortedByDescending { it.timestamp } }
+
+    fun addLog(msg: String, type: LogType = LogType.INFO) {
+        manualLogs = manualLogs + LogEntry(msg, type)
+    }
+
+    // Shared connect logic
     val handleConnect: () -> Unit = {
         val prepareIntent = vpnManager.prepareVpn(context as Activity)
         if (prepareIntent != null) {
-            // VPN permission not yet granted — launch the system consent dialog
-            logEntries = logEntries + LogEntry("Requesting VPN permission...")
+            addLog("Requesting VPN permission...", LogType.INFO)
             statusMessage = "Requesting permission..."
             if (onRequestVpnPermission != null) {
                 onRequestVpnPermission(prepareIntent) { granted ->
                     if (granted) {
-                        logEntries = logEntries + LogEntry("VPN permission granted")
-                        // Now proceed with tunnel toggle
+                        addLog("VPN permission granted", LogType.INFO)
                         scope.launch {
                             statusMessage = "Connecting..."
-                            logEntries = logEntries + LogEntry("Initiating tunnel...")
+                            addLog("Initiating tunnel...", LogType.INFO)
                             val result = vpnManager.toggleTunnel()
                             if (result.isSuccess) {
                                 vpnState = result.getOrNull()!!
                                 statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                                logEntries = logEntries + LogEntry("Tunnel state: $vpnState")
+                                addLog("Tunnel state: $vpnState", LogType.INFO)
+                                if (vpnState == Tunnel.State.UP) {
+                                    vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+                                } else {
+                                    networkMonitor.stopMonitoring()
+                                }
                             } else {
                                 statusMessage = "Error: ${result.exceptionOrNull()?.message}"
-                                logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+                                addLog("ERROR: ${result.exceptionOrNull()?.message}", LogType.ERROR)
                             }
                         }
                     } else {
                         statusMessage = "VPN permission denied"
-                        logEntries = logEntries + LogEntry("ERROR: VPN permission denied by user")
+                        addLog("VPN permission denied by user", LogType.ERROR)
                     }
                 }
             }
         } else {
-            // Permission already granted — toggle tunnel directly
             scope.launch {
                 statusMessage = "Connecting..."
-                logEntries = logEntries + LogEntry("Initiating tunnel...")
+                addLog("Initiating tunnel...", LogType.INFO)
                 val result = vpnManager.toggleTunnel()
                 if (result.isSuccess) {
                     vpnState = result.getOrNull()!!
                     statusMessage = if (vpnState == Tunnel.State.UP) "Connected" else "Disconnected"
-                    logEntries = logEntries + LogEntry("Tunnel state: $vpnState")
+                    addLog("Tunnel state: $vpnState", LogType.INFO)
+                    if (vpnState == Tunnel.State.UP) {
+                        vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+                    } else {
+                        networkMonitor.stopMonitoring()
+                        addLog("Tunnel DOWN — monitoring stopped", LogType.INFO)
+                    }
                 } else {
                     statusMessage = "Error: ${result.exceptionOrNull()?.message}"
-                    logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+                    addLog("ERROR: ${result.exceptionOrNull()?.message}", LogType.ERROR)
                 }
             }
         }
@@ -107,22 +153,77 @@ fun VpnDashboardScreen(
     val handleRegister: () -> Unit = {
         scope.launch {
             statusMessage = "Registering..."
-            logEntries = logEntries + LogEntry("Registering device...")
+            addLog("Registering device...", LogType.INFO)
             val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
             if (result.isSuccess) {
                 isRegistered = true
                 statusMessage = "Registered — Ready"
-                logEntries = logEntries + LogEntry("Device registered with server")
+                addLog("Device registered with server", LogType.INFO)
             } else {
                 statusMessage = "Registration failed"
-                logEntries = logEntries + LogEntry("ERROR: ${result.exceptionOrNull()?.message}")
+                addLog("ERROR: ${result.exceptionOrNull()?.message}", LogType.ERROR)
             }
         }
     }
 
-    // Detect foldable posture
+    // Detect foldable
     val windowInfo = currentWindowAdaptiveInfo()
     val isExpanded = windowInfo.windowSizeClass.windowWidthSizeClass == WindowWidthSizeClass.EXPANDED
+
+    if (isExpanded) {
+        ExpandedLayout(
+            vpnState = vpnState,
+            statusMessage = statusMessage,
+            isRegistered = isRegistered,
+            onRegister = handleRegister,
+            onToggle = handleConnect,
+            logEntries = allLogs,
+            rxBytes = rxBytes,
+            txBytes = txBytes,
+            rxRate = rxRate,
+            txRate = txRate,
+            networkType = networkType,
+            lastHandshake = lastHandshake
+        )
+    } else {
+        FoldedLayout(
+            vpnState = vpnState,
+            statusMessage = statusMessage,
+            isRegistered = isRegistered,
+            onRegister = handleRegister,
+            onToggle = handleConnect,
+            logEntries = allLogs,
+            rxBytes = rxBytes,
+            txBytes = txBytes,
+            rxRate = rxRate,
+            txRate = txRate,
+            networkType = networkType,
+            lastHandshake = lastHandshake
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EXPANDED (Unfolded) Layout — Two pane with swipeable right pane
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExpandedLayout(
+    vpnState: Tunnel.State,
+    statusMessage: String,
+    isRegistered: Boolean,
+    onRegister: () -> Unit,
+    onToggle: () -> Unit,
+    logEntries: List<LogEntry>,
+    rxBytes: Long,
+    txBytes: Long,
+    rxRate: String,
+    txRate: String,
+    networkType: String,
+    lastHandshake: String
+) {
+    val isConnected = vpnState == Tunnel.State.UP
 
     Scaffold(
         topBar = {
@@ -144,48 +245,18 @@ fun VpnDashboardScreen(
         },
         containerColor = SurfaceDeep
     ) { padding ->
-        if (isExpanded) {
-            // ---- UNFOLDED: Two-pane layout ----
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Left pane — Controls
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    ConnectionPanel(
-                        vpnState = vpnState,
-                        statusMessage = statusMessage,
-                        isRegistered = isRegistered,
-                        onRegister = handleRegister,
-                        onToggle = handleConnect
-                    )
-                }
-
-                // Right pane — Logs & Stats
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                ) {
-                    StatsPanel(vpnState, logEntries)
-                }
-            }
-        } else {
-            // ---- FOLDED: Single column layout ----
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Left pane — Controls
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp),
+                    .weight(1f)
+                    .fillMaxHeight(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -193,9 +264,294 @@ fun VpnDashboardScreen(
                     vpnState = vpnState,
                     statusMessage = statusMessage,
                     isRegistered = isRegistered,
-                    onRegister = handleRegister,
-                    onToggle = handleConnect
+                    onRegister = onRegister,
+                    onToggle = onToggle
                 )
+            }
+
+            // Right pane — Swipeable: Tunnel Status | Routing Log | Threat Map
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                SwipeableStatsPanel(
+                    vpnState = vpnState,
+                    logEntries = logEntries,
+                    rxBytes = rxBytes,
+                    txBytes = txBytes,
+                    rxRate = rxRate,
+                    txRate = txRate,
+                    networkType = networkType,
+                    lastHandshake = lastHandshake,
+                    isConnected = isConnected
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FOLDED Layout — Hamburger drawer + sub-pages
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FoldedLayout(
+    vpnState: Tunnel.State,
+    statusMessage: String,
+    isRegistered: Boolean,
+    onRegister: () -> Unit,
+    onToggle: () -> Unit,
+    logEntries: List<LogEntry>,
+    rxBytes: Long,
+    txBytes: Long,
+    rxRate: String,
+    txRate: String,
+    networkType: String,
+    lastHandshake: String
+) {
+    val isConnected = vpnState == Tunnel.State.UP
+    var currentPage by remember { mutableStateOf(FoldedPage.CONNECTION) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = SurfaceDark,
+                modifier = Modifier.width(260.dp)
+            ) {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    "DRAGON SCALE",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        letterSpacing = 3.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DragonCyan
+                )
+                HorizontalDivider(color = SurfaceCard, modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(8.dp))
+
+                DrawerMenuItem("🐉", "Connection", currentPage == FoldedPage.CONNECTION) {
+                    currentPage = FoldedPage.CONNECTION
+                    scope.launch { drawerState.close() }
+                }
+                DrawerMenuItem("🔒", "Tunnel Status", currentPage == FoldedPage.TUNNEL_STATUS) {
+                    currentPage = FoldedPage.TUNNEL_STATUS
+                    scope.launch { drawerState.close() }
+                }
+                DrawerMenuItem("📊", "Routing Log", currentPage == FoldedPage.ROUTING_LOG) {
+                    currentPage = FoldedPage.ROUTING_LOG
+                    scope.launch { drawerState.close() }
+                }
+                DrawerMenuItem("🗺️", "Threat Map", currentPage == FoldedPage.THREAT_MAP) {
+                    currentPage = FoldedPage.THREAT_MAP
+                    scope.launch { drawerState.close() }
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    navigationIcon = {
+                        if (currentPage == FoldedPage.CONNECTION) {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, "Menu", tint = TextSecondary)
+                            }
+                        } else {
+                            IconButton(onClick = { currentPage = FoldedPage.CONNECTION }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextSecondary)
+                            }
+                        }
+                    },
+                    title = {
+                        Text(
+                            when (currentPage) {
+                                FoldedPage.CONNECTION -> "DRAGON SCALE"
+                                FoldedPage.TUNNEL_STATUS -> "TUNNEL STATUS"
+                                FoldedPage.ROUTING_LOG -> "ROUTING LOG"
+                                FoldedPage.THREAT_MAP -> "THREAT MAP"
+                            },
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                letterSpacing = 4.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = DragonCyan
+                        )
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = SurfaceDeep
+                    )
+                )
+            },
+            containerColor = SurfaceDeep
+        ) { padding ->
+            when (currentPage) {
+                FoldedPage.CONNECTION -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        ConnectionPanel(
+                            vpnState = vpnState,
+                            statusMessage = statusMessage,
+                            isRegistered = isRegistered,
+                            onRegister = onRegister,
+                            onToggle = onToggle
+                        )
+                    }
+                }
+                FoldedPage.TUNNEL_STATUS -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(16.dp)
+                    ) {
+                        TunnelStatusCard(
+                            vpnState = vpnState,
+                            rxBytes = rxBytes,
+                            txBytes = txBytes,
+                            rxRate = rxRate,
+                            txRate = txRate,
+                            networkType = networkType,
+                            lastHandshake = lastHandshake
+                        )
+                    }
+                }
+                FoldedPage.ROUTING_LOG -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(16.dp)
+                    ) {
+                        EnhancedRoutingLog(logEntries)
+                    }
+                }
+                FoldedPage.THREAT_MAP -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(16.dp)
+                    ) {
+                        ThreatMapPanel(isConnected = isConnected)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DrawerMenuItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit) {
+    NavigationDrawerItem(
+        icon = { Text(icon, fontSize = 20.sp) },
+        label = {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (selected) DragonCyan else TextSecondary
+            )
+        },
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        colors = NavigationDrawerItemDefaults.colors(
+            selectedContainerColor = DragonCyan.copy(alpha = 0.1f),
+            unselectedContainerColor = Color.Transparent
+        )
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Swipeable Stats Panel (Unfolded right pane)
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun SwipeableStatsPanel(
+    vpnState: Tunnel.State,
+    logEntries: List<LogEntry>,
+    rxBytes: Long,
+    txBytes: Long,
+    rxRate: String,
+    txRate: String,
+    networkType: String,
+    lastHandshake: String,
+    isConnected: Boolean
+) {
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
+    val pageLabels = listOf("STATUS", "LOG", "MAP")
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Tab indicators
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            pageLabels.forEachIndexed { index, label ->
+                val isSelected = pagerState.currentPage == index
+                TextButton(
+                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 2.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        ),
+                        color = if (isSelected) DragonCyan else TextMuted
+                    )
+                }
+                if (index < pageLabels.lastIndex) {
+                    Text("·", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
+                }
+            }
+        }
+
+        // Dot indicators
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            repeat(3) { index ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(if (pagerState.currentPage == index) 8.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (pagerState.currentPage == index) DragonCyan else TextMuted
+                        )
+                )
+            }
+        }
+
+        // Pages
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            when (page) {
+                0 -> TunnelStatusCard(vpnState, rxBytes, txBytes, rxRate, txRate, networkType, lastHandshake)
+                1 -> EnhancedRoutingLog(logEntries)
+                2 -> ThreatMapPanel(isConnected = isConnected)
             }
         }
     }
@@ -215,7 +571,6 @@ fun ConnectionPanel(
 ) {
     val isConnected = vpnState == Tunnel.State.UP
 
-    // Animate the glow ring
     val infiniteTransition = rememberInfiniteTransition(label = "glow")
     val glowAlpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
@@ -253,7 +608,6 @@ fun ConnectionPanel(
             contentAlignment = Alignment.Center,
             modifier = Modifier.size(200.dp)
         ) {
-            // Outer glow ring
             Box(
                 modifier = Modifier
                     .size(200.dp)
@@ -269,27 +623,19 @@ fun ConnectionPanel(
                         shape = CircleShape
                     )
             )
-
-            // Inner circle
             Box(
                 modifier = Modifier
                     .size(160.dp)
                     .clip(CircleShape)
                     .background(
                         Brush.radialGradient(
-                            colors = listOf(
-                                SurfaceCardElevated,
-                                SurfaceCard
-                            )
+                            colors = listOf(SurfaceCardElevated, SurfaceCard)
                         )
                     )
                     .border(1.dp, statusColor.copy(alpha = 0.3f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "🐉",
-                    fontSize = 64.sp
-                )
+                Text(text = "🐉", fontSize = 64.sp)
             }
         }
 
@@ -297,25 +643,16 @@ fun ConnectionPanel(
         if (!isRegistered) {
             Button(
                 onClick = onRegister,
-                modifier = Modifier
-                    .fillMaxWidth(0.7f)
-                    .height(56.dp),
+                modifier = Modifier.fillMaxWidth(0.7f).height(56.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = DragonViolet
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = DragonViolet)
             ) {
-                Text(
-                    "REGISTER DEVICE",
-                    style = MaterialTheme.typography.labelLarge
-                )
+                Text("REGISTER DEVICE", style = MaterialTheme.typography.labelLarge)
             }
         } else {
             Button(
                 onClick = onToggle,
-                modifier = Modifier
-                    .fillMaxWidth(0.7f)
-                    .height(56.dp),
+                modifier = Modifier.fillMaxWidth(0.7f).height(56.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isConnected) DragonRed else DragonCyan,
@@ -339,11 +676,7 @@ fun ConnectionPanel(
                 modifier = Modifier.padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    "ENCRYPTION",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextMuted
-                )
+                Text("ENCRYPTION", style = MaterialTheme.typography.labelSmall, color = TextMuted)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Curve25519 • ChaCha20-Poly1305 • BLAKE2s",
@@ -357,72 +690,115 @@ fun ConnectionPanel(
 }
 
 // ---------------------------------------------------------------------------
-// Stats Panel — logs and peer info (shown in unfolded right pane)
+// Tunnel Status Card — enhanced with live stats
 // ---------------------------------------------------------------------------
 
 @Composable
-fun StatsPanel(vpnState: Tunnel.State, logEntries: List<LogEntry>) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+fun TunnelStatusCard(
+    vpnState: Tunnel.State,
+    rxBytes: Long,
+    txBytes: Long,
+    rxRate: String,
+    txRate: String,
+    networkType: String,
+    lastHandshake: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceCard)
     ) {
-        // Tunnel stats card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    "TUNNEL STATUS",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = TextMuted
-                )
-                Spacer(Modifier.height(12.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("TUNNEL STATUS", style = MaterialTheme.typography.labelLarge, color = TextMuted)
+            Spacer(Modifier.height(12.dp))
 
-                StatRow("Protocol", "WireGuard")
-                StatRow("Cipher", "ChaCha20-Poly1305")
-                StatRow("Key Exchange", "Curve25519 (ECDH)")
-                StatRow("Hash", "BLAKE2s")
-                StatRow("Port", "51820/UDP")
-                StatRow("State", if (vpnState == Tunnel.State.UP) "🟢 UP" else "🔴 DOWN")
+            StatRow("Protocol", "WireGuard")
+            StatRow("Cipher", "ChaCha20-Poly1305")
+            StatRow("Key Exchange", "Curve25519 (ECDH)")
+            StatRow("Hash", "BLAKE2s")
+            StatRow("Port", "51820/UDP")
+            StatRow("State", if (vpnState == Tunnel.State.UP) "🟢 UP" else "🔴 DOWN")
+
+            if (vpnState == Tunnel.State.UP) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = SurfaceCardElevated
+                )
+                Text("LIVE METRICS", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                Spacer(Modifier.height(8.dp))
+                StatRow("Network", networkType)
+                StatRow("Last Handshake", lastHandshake)
+                StatRow("↓ Download", "${NetworkMonitor.formatBytes(rxBytes)} ($rxRate)")
+                StatRow("↑ Upload", "${NetworkMonitor.formatBytes(txBytes)} ($txRate)")
             }
         }
+    }
+}
 
-        // Live log
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+// ---------------------------------------------------------------------------
+// Enhanced Routing Log — color-coded with type icons
+// ---------------------------------------------------------------------------
+
+@Composable
+fun EnhancedRoutingLog(logEntries: List<LogEntry>) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("ROUTING LOG", style = MaterialTheme.typography.labelLarge, color = TextMuted)
+            Spacer(Modifier.height(8.dp))
+
+            if (logEntries.isEmpty()) {
                 Text(
-                    "ROUTING LOG",
-                    style = MaterialTheme.typography.labelLarge,
+                    "No activity yet",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = TextMuted
                 )
-                Spacer(Modifier.height(8.dp))
-
-                if (logEntries.isEmpty()) {
-                    Text(
-                        "No activity yet",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextMuted
-                    )
-                } else {
-                    LazyColumn {
-                        items(logEntries.reversed()) { entry ->
+            } else {
+                LazyColumn {
+                    items(logEntries) { entry ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            // Type icon
                             Text(
-                                text = "${entry.timestamp} ${entry.message}",
+                                text = when (entry.type) {
+                                    LogType.INFO -> "ℹ️"
+                                    LogType.ERROR -> "🔴"
+                                    LogType.TRAFFIC -> "📶"
+                                    LogType.NETWORK -> "🌐"
+                                    LogType.DNS -> "🔍"
+                                },
+                                fontSize = 10.sp,
+                                modifier = Modifier.width(20.dp)
+                            )
+                            // Timestamp
+                            Text(
+                                text = entry.timestamp,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    fontSize = 12.sp
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp
                                 ),
-                                color = if (entry.message.startsWith("ERROR"))
-                                    DragonRed else TextSecondary,
-                                modifier = Modifier.padding(vertical = 2.dp)
+                                color = TextMuted,
+                                modifier = Modifier.width(65.dp)
+                            )
+                            // Message
+                            Text(
+                                text = entry.message,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp
+                                ),
+                                color = when (entry.type) {
+                                    LogType.ERROR -> DragonRed
+                                    LogType.TRAFFIC -> StatusConnected
+                                    LogType.NETWORK -> DragonViolet
+                                    LogType.DNS -> DragonCyan
+                                    LogType.INFO -> TextSecondary
+                                }
                             )
                         }
                     }
@@ -431,6 +807,10 @@ fun StatsPanel(vpnState: Tunnel.State, logEntries: List<LogEntry>) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun StatRow(label: String, value: String) {
@@ -444,9 +824,3 @@ private fun StatRow(label: String, value: String) {
         Text(value, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
     }
 }
-
-data class LogEntry(
-    val message: String,
-    val timestamp: String = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
-        .format(java.util.Date())
-)

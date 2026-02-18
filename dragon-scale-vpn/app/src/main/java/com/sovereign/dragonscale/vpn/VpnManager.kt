@@ -244,6 +244,11 @@ class VpnManager(private val context: Context) {
     }
 
     /**
+     * Get the current tunnel instance (for network monitoring).
+     */
+    fun getCurrentTunnel(): DragonScaleTunnel? = currentTunnel
+
+    /**
      * Check if device is registered.
      */
     fun isRegistered(): Boolean = cryptoManager.hasKeyPair() && encryptedPrefs.getAssignedIP() != null
