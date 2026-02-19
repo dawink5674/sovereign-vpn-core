@@ -66,7 +66,7 @@ fun VpnDashboardScreen(
 ) {
     val context = LocalContext.current
     val vpnManager = remember { VpnManager(context) }
-    val networkMonitor = remember { NetworkMonitor(context.applicationContext) }
+    val networkMonitor = remember { NetworkMonitor.getInstance(context) }
     val scope = rememberCoroutineScope()
 
     // Query actual tunnel state — survives fold/unfold and activity recreation
@@ -92,6 +92,13 @@ fun VpnDashboardScreen(
 
     fun addLog(msg: String, type: LogType = LogType.INFO) {
         manualLogs = manualLogs + LogEntry(msg, type)
+    }
+
+    // Auto-resume monitoring if tunnel is UP but monitor died (fold/unfold recovery)
+    LaunchedEffect(vpnState) {
+        if (vpnState == Tunnel.State.UP && !networkMonitor.isMonitoring) {
+            vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+        }
     }
 
     // Helper to safely find the Activity from any Context wrapper

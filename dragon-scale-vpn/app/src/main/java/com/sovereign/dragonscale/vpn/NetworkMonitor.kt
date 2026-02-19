@@ -7,16 +7,16 @@ import com.sovereign.dragonscale.DragonScaleApp
 import com.sovereign.dragonscale.ui.screens.LogEntry
 import com.sovereign.dragonscale.ui.screens.LogType
 import com.wireguard.android.backend.Statistics
-import com.wireguard.android.backend.Tunnel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Monitors VPN traffic and network state.
+ * SINGLETON — survives fold/unfold, page navigation, and activity recreation.
  * Polls GoBackend for transfer statistics every 2 seconds.
  */
-class NetworkMonitor(private val context: Context) {
+class NetworkMonitor private constructor(private val context: Context) {
 
     private val backend get() = DragonScaleApp.get(context).backend
     private var monitorJob: Job? = null
@@ -45,23 +45,31 @@ class NetworkMonitor(private val context: Context) {
     val lastHandshake = _lastHandshake.asStateFlow()
 
     fun addLog(message: String, type: LogType = LogType.INFO) {
-        _logs.value = _logs.value + LogEntry(message, type = type)
+        // Keep at most 200 entries to prevent unbounded growth
+        val updated = _logs.value + LogEntry(message, type = type)
+        _logs.value = if (updated.size > 200) updated.takeLast(200) else updated
     }
 
     fun startMonitoring(tunnel: DragonScaleTunnel) {
-        stopMonitoring()
+        // Don't restart if already monitoring the same tunnel
+        if (monitorJob?.isActive == true) return
+
         prevRx = 0
         prevTx = 0
         addLog("Tunnel UP — monitoring started", LogType.INFO)
         addLog("Network: ${detectNetworkType()}", LogType.NETWORK)
 
-        monitorJob = CoroutineScope(Dispatchers.IO).launch {
+        // Use SupervisorJob so the coroutine won't die with composable lifecycle
+        monitorJob = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             while (isActive) {
                 try {
                     val stats = backend.getStatistics(tunnel)
                     updateStats(stats)
                     _networkType.value = detectNetworkType()
-                } catch (_: Exception) { }
+                } catch (e: Exception) {
+                    // Log the error but keep polling
+                    addLog("Monitor: ${e.message ?: "error"}", LogType.ERROR)
+                }
                 delay(2000)
             }
         }
@@ -70,7 +78,11 @@ class NetworkMonitor(private val context: Context) {
     fun stopMonitoring() {
         monitorJob?.cancel()
         monitorJob = null
+        addLog("Monitoring stopped", LogType.INFO)
     }
+
+    /** Whether monitoring is currently active */
+    val isMonitoring: Boolean get() = monitorJob?.isActive == true
 
     private fun updateStats(stats: Statistics) {
         var totalRx = 0L
@@ -115,19 +127,36 @@ class NetworkMonitor(private val context: Context) {
     }
 
     private fun detectNetworkType(): String {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return "No network"
-        val caps = cm.getNetworkCapabilities(network) ?: return "Unknown"
-        return when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Cellular"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
-            else -> "Other"
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return "No network"
+            val caps = cm.getNetworkCapabilities(network) ?: return "Unknown"
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Cellular"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                else -> "Other"
+            }
+        } catch (_: Exception) {
+            "Unknown"
         }
     }
 
     companion object {
+        @Volatile
+        private var INSTANCE: NetworkMonitor? = null
+
+        /**
+         * Thread-safe singleton accessor.
+         * Always uses applicationContext to avoid activity leaks.
+         */
+        fun getInstance(context: Context): NetworkMonitor {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: NetworkMonitor(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
         fun formatBytes(bytes: Long): String = when {
             bytes < 1024 -> "$bytes B"
             bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)

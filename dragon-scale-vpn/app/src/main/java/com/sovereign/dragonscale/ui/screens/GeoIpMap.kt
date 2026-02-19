@@ -135,6 +135,46 @@ private fun LocBadge(tag: String, info: String, color: Color) {
 // Main Canvas
 // ===========================================================================
 
+/** Computed viewport for aspect-ratio-preserving projection */
+private data class MapView(
+    val offsetX: Float, val offsetY: Float,
+    val mapW: Float, val mapH: Float,
+    val canvasW: Float, val canvasH: Float,
+    val pad: Float
+)
+
+private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView {
+    val availW = canvasW - 2 * pad
+    val availH = canvasH - 2 * pad
+    val geoW = US_LON_E - US_LON_W    // 65°
+    val geoH = US_LAT_N - US_LAT_S    // 27°
+    val geoAspect = geoW / geoH        // ~2.41
+
+    // Fit within available space while preserving aspect ratio
+    val (mapW, mapH) = if (availW / availH > geoAspect) {
+        // Canvas is wider than US — constrain by height
+        (availH * geoAspect).toFloat() to availH
+    } else {
+        // Canvas is taller than US — constrain by width
+        availW to (availW / geoAspect).toFloat()
+    }
+
+    // Center the map in the canvas
+    val offsetX = pad + (availW - mapW) / 2f
+    val offsetY = pad + (availH - mapH) / 2f
+
+    return MapView(offsetX, offsetY, mapW, mapH, canvasW, canvasH, pad)
+}
+
+private fun projectMV(lat: Double, lon: Double, mv: MapView): Offset {
+    val x = mv.offsetX + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * mv.mapW).toFloat()
+    val y = mv.offsetY + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * mv.mapH).toFloat()
+    return Offset(
+        x.coerceIn(mv.offsetX, mv.offsetX + mv.mapW),
+        y.coerceIn(mv.offsetY, mv.offsetY + mv.mapH)
+    )
+}
+
 @Composable
 private fun USMapCanvas(
     userGeo: GeoIpResponse?, serverGeo: GeoIpResponse?, isConnected: Boolean
@@ -161,18 +201,19 @@ private fun USMapCanvas(
     Canvas(Modifier.fillMaxSize().padding(4.dp)) {
         val w = size.width
         val h = size.height
-        val pad = 16f
+        val pad = 14f
+        val mv = computeMapView(w, h, pad)
 
         // Layers
         drawTacticalGrid(w, h, gridScroll)
-        drawUSCoastline(w, h, pad, breathe)
-        drawStateLines(w, h, pad)
-        drawMajorCities(w, h, pad, measurer)
+        drawUSCoastline(mv, breathe)
+        drawStateLines(mv)
+        drawMajorCities(mv, measurer)
         drawVerticalScanLine(w, h, scanX)
 
         if (isConnected && userGeo != null && serverGeo != null) {
-            val uPt = project(userGeo.latitude, userGeo.longitude, w, h, pad)
-            val sPt = project(serverGeo.latitude, serverGeo.longitude, w, h, pad)
+            val uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
+            val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
 
             drawLightBeam(uPt, sPt, beamT)
             drawRadar(sPt, radarAngle, StatusConnected)
@@ -182,16 +223,6 @@ private fun USMapCanvas(
             drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
         }
     }
-}
-
-// ===========================================================================
-// Projection — fit US bounding box into canvas
-// ===========================================================================
-
-private fun project(lat: Double, lon: Double, w: Float, h: Float, pad: Float): Offset {
-    val x = pad + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * (w - 2 * pad)).toFloat()
-    val y = pad + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * (h - 2 * pad)).toFloat()
-    return Offset(x.coerceIn(pad, w - pad), y.coerceIn(pad, h - pad))
 }
 
 // ===========================================================================
@@ -212,7 +243,7 @@ private fun DrawScope.drawTacticalGrid(w: Float, h: Float, scroll: Float) {
 // US Coastline — detailed polygon
 // ===========================================================================
 
-private fun DrawScope.drawUSCoastline(w: Float, h: Float, pad: Float, glow: Float) {
+private fun DrawScope.drawUSCoastline(mv: MapView, glow: Float) {
     val fill = Color(0xFF0C1E30)
     val edge = Color(0xFF1E4868)
     val glowC = DragonCyan.copy(alpha = glow * 0.08f)
@@ -276,7 +307,7 @@ private fun DrawScope.drawUSCoastline(w: Float, h: Float, pad: Float, glow: Floa
 
     val path = Path()
     coast.forEachIndexed { i, (lat, lon) ->
-        val pt = project(lat, lon, w, h, pad)
+        val pt = projectMV(lat, lon, mv)
         if (i == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
     }
     path.close()
@@ -290,13 +321,13 @@ private fun DrawScope.drawUSCoastline(w: Float, h: Float, pad: Float, glow: Floa
 // State boundary lines
 // ===========================================================================
 
-private fun DrawScope.drawStateLines(w: Float, h: Float, pad: Float) {
+private fun DrawScope.drawStateLines(mv: MapView) {
     val lineColor = Color(0xFF153050)
 
     // Helper
     fun line(lat1: Double, lon1: Double, lat2: Double, lon2: Double) {
-        val a = project(lat1, lon1, w, h, pad)
-        val b = project(lat2, lon2, w, h, pad)
+        val a = projectMV(lat1, lon1, mv)
+        val b = projectMV(lat2, lon2, mv)
         drawLine(lineColor, a, b, 0.5f)
     }
 
@@ -347,7 +378,7 @@ private fun DrawScope.drawStateLines(w: Float, h: Float, pad: Float) {
 // Major US cities — small dots with labels
 // ===========================================================================
 
-private fun DrawScope.drawMajorCities(w: Float, h: Float, pad: Float, measurer: androidx.compose.ui.text.TextMeasurer) {
+private fun DrawScope.drawMajorCities(mv: MapView, measurer: androidx.compose.ui.text.TextMeasurer) {
     val dotColor = Color(0xFF2A5A7E)
     val style = TextStyle(color = Color(0xFF2A5A7E), fontSize = 7.sp, fontFamily = FontFamily.Monospace)
 
@@ -372,7 +403,7 @@ private fun DrawScope.drawMajorCities(w: Float, h: Float, pad: Float, measurer: 
     )
 
     cities.forEach { c ->
-        val pt = project(c.lat, c.lon, w, h, pad)
+        val pt = projectMV(c.lat, c.lon, mv)
         drawCircle(dotColor, 2.5f, pt)
         val result = measurer.measure(c.name, style)
         drawText(result, topLeft = Offset(pt.x + 5f, pt.y - 5f))
