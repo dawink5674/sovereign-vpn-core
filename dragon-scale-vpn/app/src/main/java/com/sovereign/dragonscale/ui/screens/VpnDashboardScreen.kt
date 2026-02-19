@@ -82,9 +82,20 @@ fun VpnDashboardScreen(
     // --- Fetch real user location BEFORE VPN connects ---
     // This runs once at dashboard creation, capturing the user's real public IP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
+    var geoError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         if (preVpnUserLoc == null) {
-            try { preVpnUserLoc = GeoIpClient.api.lookupSelf() } catch (_: Exception) {}
+            // Retry up to 3 times with delay
+            for (attempt in 1..3) {
+                try {
+                    preVpnUserLoc = GeoIpClient.api.lookupSelf()
+                    geoError = null
+                    break
+                } catch (e: Exception) {
+                    geoError = "GeoIP attempt $attempt: ${e.message}"
+                    kotlinx.coroutines.delay(3000L)
+                }
+            }
         }
     }
 
