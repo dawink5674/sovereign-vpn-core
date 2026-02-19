@@ -38,22 +38,15 @@ private const val US_LON_E = -65.0
 @Composable
 fun ThreatMapPanel(
     isConnected: Boolean,
+    preVpnUserLoc: GeoIpResponse? = null,
     serverIp: String = "35.206.67.49",
     modifier: Modifier = Modifier
 ) {
-    var userLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
+    // Use the pre-VPN user location passed from VpnDashboardScreen
+    // (fetched before VPN connected, so it's the user's real IP location)
+    val userLoc = preVpnUserLoc
     var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     val scope = rememberCoroutineScope()
-
-    // Fetch user's REAL location eagerly — before VPN tunnels traffic
-    // Only runs once (Unit key), caches the result
-    LaunchedEffect(Unit) {
-        if (userLoc == null) {
-            scope.launch {
-                try { userLoc = GeoIpClient.api.lookupSelf() } catch (_: Exception) {}
-            }
-        }
-    }
 
     // Fetch server location only when connected
     LaunchedEffect(isConnected) {

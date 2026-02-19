@@ -33,6 +33,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.window.core.layout.WindowWidthSizeClass
+import com.sovereign.dragonscale.network.GeoIpClient
+import com.sovereign.dragonscale.network.GeoIpResponse
 import com.sovereign.dragonscale.ui.theme.*
 import com.sovereign.dragonscale.vpn.NetworkMonitor
 import com.sovereign.dragonscale.vpn.VpnManager
@@ -76,6 +78,15 @@ fun VpnDashboardScreen(
         mutableStateOf(if (initialState == Tunnel.State.UP) "Connected" else "Disconnected")
     }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
+
+    // --- Fetch real user location BEFORE VPN connects ---
+    // This runs once at dashboard creation, capturing the user's real public IP
+    var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
+    LaunchedEffect(Unit) {
+        if (preVpnUserLoc == null) {
+            try { preVpnUserLoc = GeoIpClient.api.lookupSelf() } catch (_: Exception) {}
+        }
+    }
 
     // Collect network monitor flows
     val monitorLogs by networkMonitor.logs.collectAsState()
@@ -208,7 +219,8 @@ fun VpnDashboardScreen(
             rxRate = rxRate,
             txRate = txRate,
             networkType = networkType,
-            lastHandshake = lastHandshake
+            lastHandshake = lastHandshake,
+            preVpnUserLoc = preVpnUserLoc
         )
     } else {
         FoldedLayout(
@@ -223,7 +235,8 @@ fun VpnDashboardScreen(
             rxRate = rxRate,
             txRate = txRate,
             networkType = networkType,
-            lastHandshake = lastHandshake
+            lastHandshake = lastHandshake,
+            preVpnUserLoc = preVpnUserLoc
         )
     }
 }
@@ -246,7 +259,8 @@ private fun ExpandedLayout(
     rxRate: String,
     txRate: String,
     networkType: String,
-    lastHandshake: String
+    lastHandshake: String,
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val isConnected = vpnState == Tunnel.State.UP
 
@@ -309,7 +323,8 @@ private fun ExpandedLayout(
                     txRate = txRate,
                     networkType = networkType,
                     lastHandshake = lastHandshake,
-                    isConnected = isConnected
+                    isConnected = isConnected,
+                    preVpnUserLoc = preVpnUserLoc
                 )
             }
         }
@@ -334,7 +349,8 @@ private fun FoldedLayout(
     rxRate: String,
     txRate: String,
     networkType: String,
-    lastHandshake: String
+    lastHandshake: String,
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val isConnected = vpnState == Tunnel.State.UP
     var currentPage by remember { mutableStateOf(FoldedPage.CONNECTION) }
@@ -470,7 +486,7 @@ private fun FoldedLayout(
                             .padding(padding)
                             .padding(16.dp)
                     ) {
-                        ThreatMapPanel(isConnected = isConnected)
+                        ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc)
                     }
                 }
             }
@@ -513,7 +529,8 @@ private fun SwipeableStatsPanel(
     txRate: String,
     networkType: String,
     lastHandshake: String,
-    isConnected: Boolean
+    isConnected: Boolean,
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val pagerState = rememberPagerState(pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -576,7 +593,7 @@ private fun SwipeableStatsPanel(
             when (page) {
                 0 -> TunnelStatusCard(vpnState, rxBytes, txBytes, rxRate, txRate, networkType, lastHandshake)
                 1 -> EnhancedRoutingLog(logEntries)
-                2 -> ThreatMapPanel(isConnected = isConnected)
+                2 -> ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc)
             }
         }
     }
