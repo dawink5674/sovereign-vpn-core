@@ -148,7 +148,9 @@ private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView 
     val availH = canvasH - 2 * pad
     val geoW = US_LON_E - US_LON_W    // 65°
     val geoH = US_LAT_N - US_LAT_S    // 27°
-    val geoAspect = geoW / geoH        // ~2.41
+    // Use 1.85 instead of natural 2.41 for more vertical presence
+    // (compensates for latitude compression at mid-latitudes)
+    val geoAspect = 1.85
 
     // Fit within available space while preserving aspect ratio
     val (mapW, mapH) = if (availW / availH > geoAspect) {
