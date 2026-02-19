@@ -45,13 +45,21 @@ fun ThreatMapPanel(
     var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(isConnected) {
-        if (isConnected) {
+    // Fetch user's REAL location eagerly — before VPN tunnels traffic
+    // Only runs once (Unit key), caches the result
+    LaunchedEffect(Unit) {
+        if (userLoc == null) {
             scope.launch {
-                try {
-                    userLoc = GeoIpClient.api.lookupSelf()
-                    serverLoc = GeoIpClient.api.lookup(serverIp)
-                } catch (_: Exception) {}
+                try { userLoc = GeoIpClient.api.lookupSelf() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Fetch server location only when connected
+    LaunchedEffect(isConnected) {
+        if (isConnected && serverLoc == null) {
+            scope.launch {
+                try { serverLoc = GeoIpClient.api.lookup(serverIp) } catch (_: Exception) {}
             }
         }
     }
