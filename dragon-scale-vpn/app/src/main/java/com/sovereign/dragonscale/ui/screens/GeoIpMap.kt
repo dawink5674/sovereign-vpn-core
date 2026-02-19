@@ -12,8 +12,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sovereign.dragonscale.network.GeoIpClient
@@ -22,9 +25,15 @@ import com.sovereign.dragonscale.ui.theme.*
 import kotlinx.coroutines.launch
 import kotlin.math.*
 
-// ---------------------------------------------------------------------------
-// SOC-Style Geo-IP Threat Map — Premium Edition
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// SOC Threat Map — US-Only, Canvas-Rendered
+// ===========================================================================
+
+// US bounding box for projection
+private const val US_LAT_N = 50.5
+private const val US_LAT_S = 23.5
+private const val US_LON_W = -130.0
+private const val US_LON_E = -65.0
 
 @Composable
 fun ThreatMapPanel(
@@ -32,91 +41,74 @@ fun ThreatMapPanel(
     serverIp: String = "35.206.67.49",
     modifier: Modifier = Modifier
 ) {
-    var userLocation by remember { mutableStateOf<GeoIpResponse?>(null) }
-    var serverLocation by remember { mutableStateOf<GeoIpResponse?>(null) }
+    var userLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
+    var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(isConnected) {
         if (isConnected) {
             scope.launch {
                 try {
-                    userLocation = GeoIpClient.api.lookupSelf()
-                    serverLocation = GeoIpClient.api.lookup(serverIp)
-                } catch (_: Exception) { }
+                    userLoc = GeoIpClient.api.lookupSelf()
+                    serverLoc = GeoIpClient.api.lookup(serverIp)
+                } catch (_: Exception) {}
             }
         }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Header
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp),
+            Modifier.fillMaxWidth().padding(bottom = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                "THREAT MAP",
-                style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 2.sp),
-                color = TextMuted
-            )
-            if (isConnected && userLocation != null) {
-                Text(
-                    "${userLocation?.ip} → $serverIp",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace, fontSize = 10.sp
-                    ),
-                    color = DragonCyan
-                )
+            Text("THREAT MAP — CONUS", style = MaterialTheme.typography.labelLarge.copy(
+                letterSpacing = 2.sp), color = TextMuted)
+            if (isConnected && userLoc != null) {
+                Text("${userLoc?.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace, fontSize = 9.sp
+                ), color = DragonCyan)
             }
         }
 
         Card(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            Modifier.fillMaxWidth().weight(1f),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF020810))
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF010612))
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                SOCMapCanvas(
-                    userGeo = userLocation,
-                    serverGeo = serverLocation,
-                    isConnected = isConnected
-                )
-                // Info overlay
-                if (isConnected && userLocation != null && serverLocation != null) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(10.dp)
-                    ) {
-                        LocationChip("YOU", userLocation!!.city, userLocation!!.country_name, DragonCyan)
+            Box(Modifier.fillMaxSize()) {
+                USMapCanvas(userLoc, serverLoc, isConnected)
+
+                // Overlays
+                if (isConnected && userLoc != null && serverLoc != null) {
+                    // Bottom-left: location badges
+                    Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+                        LocBadge("SRC", "${userLoc!!.city}, ${userLoc!!.region}", DragonCyan)
                         Spacer(Modifier.height(3.dp))
-                        LocationChip("EXIT", serverLocation!!.city, serverLocation!!.country_name, StatusConnected)
+                        LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
                     }
-                    // Latency / status badge
+                    // Top-right: status
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(10.dp)
-                            .background(Color(0xCC020810), RoundedCornerShape(6.dp))
+                        Modifier.align(Alignment.TopEnd).padding(10.dp)
+                            .background(Color(0xDD010612), RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("ENCRYPTED", style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 8.sp, letterSpacing = 1.5.sp
+                        Text("● SECURE TUNNEL", style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp, letterSpacing = 1.sp
                         ), color = StatusConnected)
-                        Text("WireGuard/UDP", style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 8.sp
+                        Text("WireGuard · ChaCha20", style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 7.sp
                         ), color = TextMuted)
                     }
                 }
                 if (!isConnected) {
-                    Text(
-                        "CONNECT TO ACTIVATE",
-                        modifier = Modifier.align(Alignment.Center),
-                        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 2.sp),
-                        color = TextMuted
-                    )
+                    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("AWAITING CONNECTION", style = MaterialTheme.typography.labelMedium.copy(
+                            letterSpacing = 3.sp), color = TextMuted)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Connect VPN to activate threat map", style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 10.sp), color = TextMuted.copy(alpha = 0.5f))
+                    }
                 }
             }
         }
@@ -124,406 +116,455 @@ fun ThreatMapPanel(
 }
 
 @Composable
-private fun LocationChip(tag: String, city: String, country: String, color: Color) {
+private fun LocBadge(tag: String, info: String, color: Color) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .background(Color(0xCC020810), RoundedCornerShape(6.dp))
+        modifier = Modifier.background(Color(0xDD010612), RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .background(color, RoundedCornerShape(3.dp))
-        )
+        Box(Modifier.size(6.dp).background(color, RoundedCornerShape(3.dp)))
         Spacer(Modifier.width(6.dp))
         Text(tag, style = MaterialTheme.typography.labelSmall.copy(
-            fontWeight = FontWeight.Bold, fontSize = 9.sp
-        ), color = color)
+            fontWeight = FontWeight.Bold, fontSize = 9.sp), color = color)
         Spacer(Modifier.width(6.dp))
-        Text("$city, $country", style = MaterialTheme.typography.bodySmall.copy(
-            fontSize = 10.sp
-        ), color = TextSecondary)
+        Text(info, style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp), color = TextSecondary)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Canvas: full SOC experience
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Main Canvas
+// ===========================================================================
 
 @Composable
-private fun SOCMapCanvas(
-    userGeo: GeoIpResponse?,
-    serverGeo: GeoIpResponse?,
-    isConnected: Boolean
+private fun USMapCanvas(
+    userGeo: GeoIpResponse?, serverGeo: GeoIpResponse?, isConnected: Boolean
 ) {
     val anim = rememberInfiniteTransition(label = "soc")
 
-    val pulseR by anim.animateFloat(6f, 22f, infiniteRepeatable(
-        tween(2000, easing = EaseInOutCubic), RepeatMode.Reverse
-    ), label = "pr")
-    val pulseA by anim.animateFloat(0.8f, 0.1f, infiniteRepeatable(
-        tween(2000, easing = EaseInOutCubic), RepeatMode.Reverse
-    ), label = "pa")
-    val arcT by anim.animateFloat(0f, 1f, infiniteRepeatable(
-        tween(4000, easing = LinearEasing)
-    ), label = "at")
-    val gridScroll by anim.animateFloat(0f, 30f, infiniteRepeatable(
-        tween(8000, easing = LinearEasing)
-    ), label = "gs")
-    val scanAngle by anim.animateFloat(0f, 360f, infiniteRepeatable(
-        tween(6000, easing = LinearEasing)
-    ), label = "scan")
-    val glowPulse by anim.animateFloat(0.3f, 0.7f, infiniteRepeatable(
-        tween(3000, easing = EaseInOutCubic), RepeatMode.Reverse
-    ), label = "gp")
+    val pulseR by anim.animateFloat(8f, 28f, infiniteRepeatable(
+        tween(2200, easing = EaseInOutCubic), RepeatMode.Reverse), label = "pr")
+    val pulseA by anim.animateFloat(0.9f, 0.05f, infiniteRepeatable(
+        tween(2200, easing = EaseInOutCubic), RepeatMode.Reverse), label = "pa")
+    val beamT by anim.animateFloat(0f, 1f, infiniteRepeatable(
+        tween(3000, easing = LinearEasing)), label = "bt")
+    val gridScroll by anim.animateFloat(0f, 24f, infiniteRepeatable(
+        tween(10000, easing = LinearEasing)), label = "gs")
+    val radarAngle by anim.animateFloat(0f, 360f, infiniteRepeatable(
+        tween(5000, easing = LinearEasing)), label = "ra")
+    val scanX by anim.animateFloat(0f, 1f, infiniteRepeatable(
+        tween(7000, easing = LinearEasing)), label = "sx")
+    val breathe by anim.animateFloat(0.4f, 0.8f, infiniteRepeatable(
+        tween(4000, easing = EaseInOutCubic), RepeatMode.Reverse), label = "br")
 
-    Canvas(modifier = Modifier.fillMaxSize()) {
+    val measurer = rememberTextMeasurer()
+
+    Canvas(Modifier.fillMaxSize().padding(4.dp)) {
         val w = size.width
         val h = size.height
+        val pad = 16f
 
-        // Layer 1: Grid
-        drawSOCGrid(w, h, gridScroll)
+        // Layers
+        drawTacticalGrid(w, h, gridScroll)
+        drawUSCoastline(w, h, pad, breathe)
+        drawStateLines(w, h, pad)
+        drawMajorCities(w, h, pad, measurer)
+        drawVerticalScanLine(w, h, scanX)
 
-        // Layer 2: World coastlines (real coordinates)
-        drawRealWorldMap(w, h, glowPulse)
-
-        // Layer 3: Horizontal scan line
-        val scanY = (gridScroll / 30f * h) % h
-        drawLine(
-            brush = Brush.horizontalGradient(
-                colors = listOf(Color.Transparent, DragonCyan.copy(alpha = 0.15f), Color.Transparent)
-            ),
-            start = Offset(0f, scanY), end = Offset(w, scanY), strokeWidth = 2f
-        )
-
-        // Layer 4: Connection
         if (isConnected && userGeo != null && serverGeo != null) {
-            val userPt = mercator(userGeo.latitude, userGeo.longitude, w, h)
-            val serverPt = mercator(serverGeo.latitude, serverGeo.longitude, w, h)
+            val uPt = project(userGeo.latitude, userGeo.longitude, w, h, pad)
+            val sPt = project(serverGeo.latitude, serverGeo.longitude, w, h, pad)
 
-            // Great-circle arc with glow
-            drawGreatCircleArc(userPt, serverPt, arcT, w, h)
-
-            // Radar sweep at server
-            drawRadarSweep(serverPt, scanAngle, StatusConnected)
-
-            // Pulsing nodes
-            drawSOCNode(userPt, DragonCyan, pulseR, pulseA, "SRC")
-            drawSOCNode(serverPt, StatusConnected, pulseR, pulseA, "DST")
-
-            // Distance line info
-            val midPt = Offset((userPt.x + serverPt.x) / 2, min(userPt.y, serverPt.y) - 40f)
-            val distKm = haversineKm(
-                userGeo.latitude, userGeo.longitude,
-                serverGeo.latitude, serverGeo.longitude
-            )
-            // Distance is just for visual effect — drawn as part of the arc
+            drawLightBeam(uPt, sPt, beamT)
+            drawRadar(sPt, radarAngle, StatusConnected)
+            drawUserNode(uPt, DragonCyan, pulseR, pulseA)
+            drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
+            drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
+            drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Mercator projection
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Projection — fit US bounding box into canvas
+// ===========================================================================
 
-private fun mercator(lat: Double, lon: Double, w: Float, h: Float): Offset {
-    val x = ((lon + 180.0) / 360.0 * w).toFloat()
-    val latRad = lat * PI / 180.0
-    val mercN = ln(tan(PI / 4.0 + latRad / 2.0))
-    val y = (h / 2.0 - mercN / PI * h / 2.0).toFloat()
-    return Offset(x.coerceIn(12f, w - 12f), y.coerceIn(12f, h - 12f))
+private fun project(lat: Double, lon: Double, w: Float, h: Float, pad: Float): Offset {
+    val x = pad + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * (w - 2 * pad)).toFloat()
+    val y = pad + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * (h - 2 * pad)).toFloat()
+    return Offset(x.coerceIn(pad, w - pad), y.coerceIn(pad, h - pad))
 }
 
-private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
-    val R = 6371.0
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLon = Math.toRadians(lon2 - lon1)
-    val a = sin(dLat / 2).pow(2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
-    return (R * 2 * atan2(sqrt(a), sqrt(1 - a))).toInt()
+// ===========================================================================
+// Tactical grid
+// ===========================================================================
+
+private fun DrawScope.drawTacticalGrid(w: Float, h: Float, scroll: Float) {
+    val fine = 16f;  val major = 80f
+    val fineC = Color(0xFF081422); val majorC = Color(0xFF0E2438)
+
+    var y = scroll % fine; while (y < h) { drawLine(fineC, Offset(0f,y), Offset(w,y), 0.3f); y += fine }
+    var x = 0f; while (x < w) { drawLine(fineC, Offset(x,0f), Offset(x,h), 0.3f); x += fine }
+    y = scroll % major; while (y < h) { drawLine(majorC, Offset(0f,y), Offset(w,y), 0.6f); y += major }
+    x = 0f; while (x < w) { drawLine(majorC, Offset(x,0f), Offset(x,h), 0.6f); x += major }
 }
 
-// ---------------------------------------------------------------------------
-// SOC Grid — parallax scrolling with latitude/longitude lines
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// US Coastline — detailed polygon
+// ===========================================================================
 
-private fun DrawScope.drawSOCGrid(w: Float, h: Float, scroll: Float) {
-    val fine = 20f
-    val major = 80f
-    val fineColor = Color(0xFF071420)
-    val majorColor = Color(0xFF0C2236)
+private fun DrawScope.drawUSCoastline(w: Float, h: Float, pad: Float, glow: Float) {
+    val fill = Color(0xFF0C1E30)
+    val edge = Color(0xFF1E4868)
+    val glowC = DragonCyan.copy(alpha = glow * 0.08f)
 
-    // Fine grid
-    var y = scroll % fine
-    while (y < h) {
-        drawLine(fineColor, Offset(0f, y), Offset(w, y), 0.3f)
-        y += fine
-    }
-    var x = 0f
-    while (x < w) {
-        drawLine(fineColor, Offset(x, 0f), Offset(x, h), 0.3f)
-        x += fine
-    }
-
-    // Major grid (meridians/parallels)
-    y = scroll % major
-    while (y < h) {
-        drawLine(majorColor, Offset(0f, y), Offset(w, y), 0.6f)
-        y += major
-    }
-    x = 0f
-    while (x < w) {
-        drawLine(majorColor, Offset(x, 0f), Offset(x, h), 0.6f)
-        x += major
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Real World Map — actual coastline polygons (simplified)
-// ---------------------------------------------------------------------------
-
-private fun DrawScope.drawRealWorldMap(w: Float, h: Float, glow: Float) {
-    val coastColor = Color(0xFF1A3D52)
-    val fillColor = Color(0xFF0A1E2D)
-    val borderGlow = DragonCyan.copy(alpha = glow * 0.12f)
-
-    // Coastline polygons as (lat, lon) pairs — simplified but recognizable
-    val continents = listOf(
-        // North America
-        listOf(
-            50.0 to -128.0, 54.0 to -130.0, 60.0 to -140.0, 64.0 to -142.0,
-            70.0 to -141.0, 72.0 to -128.0, 70.0 to -100.0, 64.0 to -90.0,
-            60.0 to -80.0, 55.0 to -60.0, 50.0 to -56.0, 47.0 to -53.0,
-            44.0 to -63.0, 42.0 to -70.0, 40.0 to -74.0, 35.0 to -75.0,
-            30.0 to -81.0, 25.0 to -80.0, 25.0 to -82.0, 30.0 to -85.0,
-            30.0 to -90.0, 29.0 to -95.0, 26.0 to -97.0, 22.0 to -98.0,
-            18.0 to -105.0, 20.0 to -106.0, 24.0 to -110.0, 30.0 to -114.0,
-            32.0 to -117.0, 34.0 to -120.0, 38.0 to -123.0, 42.0 to -124.0,
-            46.0 to -124.0, 48.0 to -125.0, 50.0 to -128.0
-        ),
-        // South America
-        listOf(
-            12.0 to -72.0, 10.0 to -62.0, 7.0 to -52.0, 2.0 to -50.0,
-            -3.0 to -41.0, -8.0 to -35.0, -13.0 to -38.0, -18.0 to -39.0,
-            -23.0 to -41.0, -28.0 to -48.0, -33.0 to -52.0, -38.0 to -57.0,
-            -41.0 to -63.0, -46.0 to -66.0, -50.0 to -68.0, -53.0 to -70.0,
-            -55.0 to -69.0, -52.0 to -75.0, -46.0 to -76.0, -40.0 to -73.0,
-            -33.0 to -72.0, -27.0 to -71.0, -18.0 to -70.0, -12.0 to -77.0,
-            -5.0 to -81.0, 0.0 to -80.0, 5.0 to -77.0, 8.0 to -77.0,
-            10.0 to -75.0, 12.0 to -72.0
-        ),
-        // Europe
-        listOf(
-            36.0 to -6.0, 37.0 to -2.0, 38.0 to 0.0, 41.0 to 2.0,
-            43.0 to 3.0, 44.0 to 8.0, 45.0 to 13.0, 42.0 to 18.0,
-            40.0 to 20.0, 38.0 to 24.0, 41.0 to 29.0, 42.0 to 28.0,
-            44.0 to 29.0, 46.0 to 30.0, 48.0 to 24.0, 52.0 to 21.0,
-            54.0 to 18.0, 55.0 to 10.0, 57.0 to 8.0, 58.0 to 6.0,
-            62.0 to 5.0, 64.0 to 10.0, 68.0 to 15.0, 71.0 to 26.0,
-            70.0 to 30.0, 65.0 to 30.0, 60.0 to 28.0, 60.0 to 20.0,
-            56.0 to 10.0, 54.0 to 9.0, 53.0 to 6.0, 51.0 to 4.0,
-            50.0 to 1.0, 49.0 to -1.0, 48.0 to -5.0, 44.0 to -1.0,
-            43.0 to -3.0, 43.0 to -9.0, 38.0 to -9.0, 36.0 to -6.0
-        ),
-        // Africa
-        listOf(
-            35.0 to -6.0, 37.0 to 10.0, 33.0 to 12.0, 32.0 to 25.0,
-            31.0 to 32.0, 22.0 to 37.0, 15.0 to 40.0, 12.0 to 43.0,
-            12.0 to 51.0, 2.0 to 42.0, -1.0 to 42.0, -5.0 to 40.0,
-            -10.0 to 40.0, -15.0 to 35.0, -25.0 to 35.0, -30.0 to 32.0,
-            -34.0 to 27.0, -34.0 to 18.0, -28.0 to 16.0, -22.0 to 14.0,
-            -17.0 to 12.0, -12.0 to 14.0, -5.0 to 12.0, 0.0 to 10.0,
-            5.0 to 2.0, 4.0 to 7.0, 6.0 to 3.0, 5.0 to -5.0,
-            8.0 to -13.0, 12.0 to -16.0, 15.0 to -17.0, 20.0 to -17.0,
-            22.0 to -16.0, 28.0 to -13.0, 32.0 to -8.0, 35.0 to -6.0
-        ),
-        // Asia (mainland)
-        listOf(
-            42.0 to 28.0, 41.0 to 40.0, 40.0 to 44.0, 38.0 to 48.0,
-            30.0 to 48.0, 25.0 to 56.0, 22.0 to 60.0, 25.0 to 62.0,
-            25.0 to 66.0, 24.0 to 68.0, 20.0 to 73.0, 22.0 to 79.0,
-            18.0 to 83.0, 8.0 to 77.0, 6.0 to 80.0, 15.0 to 100.0,
-            10.0 to 104.0, 1.0 to 104.0, 1.0 to 110.0, 7.0 to 117.0,
-            20.0 to 110.0, 22.0 to 114.0, 25.0 to 120.0, 30.0 to 122.0,
-            35.0 to 120.0, 38.0 to 122.0, 40.0 to 124.0, 42.0 to 130.0,
-            45.0 to 133.0, 50.0 to 135.0, 53.0 to 140.0, 55.0 to 137.0,
-            58.0 to 140.0, 60.0 to 143.0, 62.0 to 150.0, 64.0 to 160.0,
-            66.0 to 170.0, 66.0 to 180.0, 70.0 to 180.0, 72.0 to 140.0,
-            72.0 to 100.0, 70.0 to 70.0, 68.0 to 55.0, 60.0 to 30.0,
-            55.0 to 28.0, 50.0 to 30.0, 46.0 to 30.0, 44.0 to 29.0,
-            42.0 to 28.0
-        ),
-        // Australia
-        listOf(
-            -12.0 to 136.0, -12.0 to 142.0, -16.0 to 146.0, -19.0 to 147.0,
-            -24.0 to 152.0, -28.0 to 153.0, -33.0 to 152.0, -37.0 to 150.0,
-            -39.0 to 146.0, -38.0 to 141.0, -35.0 to 137.0, -35.0 to 136.0,
-            -33.0 to 134.0, -32.0 to 132.0, -34.0 to 129.0, -34.0 to 119.0,
-            -31.0 to 115.0, -25.0 to 113.0, -22.0 to 114.0, -18.0 to 122.0,
-            -15.0 to 129.0, -14.0 to 132.0, -12.0 to 136.0
-        ),
-        // Japan
-        listOf(
-            31.0 to 131.0, 33.0 to 130.0, 34.0 to 132.0, 35.0 to 135.0,
-            36.0 to 137.0, 37.0 to 137.0, 39.0 to 140.0, 41.0 to 140.0,
-            42.0 to 141.0, 44.0 to 145.0, 43.0 to 146.0, 42.0 to 143.0,
-            40.0 to 142.0, 37.0 to 141.0, 35.0 to 140.0, 34.0 to 137.0,
-            33.0 to 136.0, 31.0 to 131.0
-        ),
-        // UK + Ireland
-        listOf(
-            50.0 to -5.0, 51.0 to 1.0, 53.0 to 0.0, 55.0 to -1.0,
-            57.0 to -2.0, 58.0 to -5.0, 57.0 to -7.0, 55.0 to -7.0,
-            53.0 to -10.0, 52.0 to -10.0, 51.0 to -9.0, 50.0 to -5.0
-        ),
-        // Greenland
-        listOf(
-            60.0 to -43.0, 62.0 to -42.0, 66.0 to -35.0, 70.0 to -22.0,
-            76.0 to -18.0, 80.0 to -20.0, 82.0 to -30.0, 80.0 to -55.0,
-            76.0 to -60.0, 72.0 to -55.0, 66.0 to -52.0, 62.0 to -50.0,
-            60.0 to -43.0
-        ),
-        // Alaska
-        listOf(
-            52.0 to -172.0, 54.0 to -166.0, 56.0 to -160.0, 58.0 to -152.0,
-            60.0 to -148.0, 61.0 to -147.0, 63.0 to -146.0, 65.0 to -143.0,
-            70.0 to -141.0, 71.0 to -155.0, 70.0 to -163.0, 66.0 to -168.0,
-            60.0 to -170.0, 55.0 to -163.0, 52.0 to -172.0
-        )
+    // Detailed US coastline (lat, lon) — continental US outline
+    val coast = listOf(
+        // Pacific NW
+        48.4 to -124.7, 48.2 to -123.0, 47.5 to -122.4, 46.3 to -124.0,
+        44.6 to -124.1, 42.0 to -124.3, 40.8 to -124.2,
+        // California
+        39.0 to -123.7, 38.3 to -123.1, 37.8 to -122.5, 37.0 to -122.4,
+        36.6 to -121.9, 35.5 to -121.0, 34.5 to -120.5, 34.0 to -119.0,
+        33.9 to -118.4, 33.2 to -117.4, 32.5 to -117.1,
+        // US-Mexico border (west to east)
+        32.5 to -117.1, 32.7 to -114.7, 31.3 to -111.1, 31.3 to -108.2,
+        31.8 to -106.6, 29.8 to -104.4, 29.4 to -103.0, 28.0 to -100.5,
+        26.0 to -97.5,
+        // Texas Gulf coast
+        26.1 to -97.2, 27.6 to -97.1, 28.3 to -96.4, 29.0 to -95.0,
+        29.3 to -94.7, 29.8 to -93.9, 29.7 to -93.3,
+        // Louisiana
+        29.5 to -92.3, 29.7 to -91.3, 29.0 to -90.0, 29.2 to -89.4,
+        29.6 to -89.0, 30.0 to -89.0, 30.2 to -88.0,
+        // Mississippi / Alabama / Florida panhandle
+        30.2 to -88.0, 30.3 to -87.5, 30.3 to -86.5, 30.0 to -85.5,
+        29.9 to -84.5, 29.0 to -83.0,
+        // Florida peninsula
+        28.5 to -82.6, 27.5 to -82.7, 26.5 to -82.0, 25.8 to -81.2,
+        25.2 to -80.3, 25.8 to -80.1, 26.7 to -80.0, 27.5 to -80.2,
+        28.5 to -80.6, 29.5 to -81.0, 30.3 to -81.4, 30.7 to -81.5,
+        // Georgia / Carolinas
+        31.5 to -81.1, 32.0 to -80.8, 32.8 to -79.9, 33.5 to -79.0,
+        34.0 to -77.8, 34.7 to -76.5, 35.2 to -75.5,
+        // Outer Banks / Virginia / Chesapeake
+        35.9 to -75.6, 36.9 to -76.0, 37.0 to -76.4, 37.5 to -76.0,
+        37.8 to -75.5, 38.5 to -75.1, 38.8 to -75.0,
+        // Delaware / New Jersey
+        39.2 to -75.2, 39.5 to -75.6, 39.7 to -74.1, 40.5 to -74.0,
+        40.7 to -74.0,
+        // New York / Connecticut / New England
+        40.6 to -73.8, 41.0 to -72.0, 41.3 to -71.8, 41.5 to -71.4,
+        42.0 to -70.7, 42.3 to -70.0, 43.0 to -70.8, 43.5 to -70.2,
+        44.3 to -68.2, 44.8 to -67.0, 45.0 to -67.0,
+        // Maine / Canadian border east
+        47.0 to -67.8, 47.3 to -68.4, 47.0 to -69.1,
+        // Northern border (east to west)
+        45.0 to -71.5, 45.0 to -74.0, 44.0 to -76.0, 43.5 to -76.5,
+        43.5 to -79.0, 42.0 to -83.0, 42.5 to -82.5,
+        // Great Lakes approximate shoreline
+        43.0 to -82.5, 43.6 to -82.6, 44.8 to -83.5, 45.5 to -84.0,
+        46.0 to -84.5, 46.5 to -84.4, 47.0 to -85.0, 47.5 to -87.5,
+        47.0 to -88.5, 46.8 to -89.5, 46.5 to -90.5,
+        46.8 to -92.0, 48.0 to -89.5, 48.5 to -88.5, 48.0 to -85.0,
+        46.5 to -84.5,
+        // Northern border west
+        46.5 to -84.5, 46.0 to -86.0, 47.0 to -88.0, 47.5 to -90.0,
+        48.0 to -90.5, 49.0 to -95.0, 49.0 to -100.0, 49.0 to -105.0,
+        49.0 to -110.0, 49.0 to -115.0, 49.0 to -120.0, 49.0 to -123.0,
+        48.4 to -124.7
     )
 
-    continents.forEach { coords ->
-        val path = Path()
-        coords.forEachIndexed { i, (lat, lon) ->
-            val pt = mercator(lat, lon, w, h)
-            if (i == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
-        }
-        path.close()
+    val path = Path()
+    coast.forEachIndexed { i, (lat, lon) ->
+        val pt = project(lat, lon, w, h, pad)
+        if (i == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
+    }
+    path.close()
 
-        // Fill
-        drawPath(path, fillColor)
-        // Border glow
-        drawPath(path, borderGlow, style = Stroke(1.5f))
-        // Sharp edge
-        drawPath(path, coastColor, style = Stroke(0.8f))
+    drawPath(path, fill)
+    drawPath(path, glowC, style = Stroke(3f))
+    drawPath(path, edge, style = Stroke(1.2f))
+}
+
+// ===========================================================================
+// State boundary lines
+// ===========================================================================
+
+private fun DrawScope.drawStateLines(w: Float, h: Float, pad: Float) {
+    val lineColor = Color(0xFF153050)
+
+    // Helper
+    fun line(lat1: Double, lon1: Double, lat2: Double, lon2: Double) {
+        val a = project(lat1, lon1, w, h, pad)
+        val b = project(lat2, lon2, w, h, pad)
+        drawLine(lineColor, a, b, 0.5f)
+    }
+
+    // Major state border lines (horizontal)
+    // Tennessee / NC border ~ 36.5
+    line(36.5, -90.3, 36.5, -75.5)
+    // Virginia / NC ~ 36.5 (eastern portion already covered)
+    // Oklahoma / Texas ~ 33.6-36.5
+    line(36.5, -103.0, 36.5, -94.5)
+    // Kansas / Oklahoma ~ 37
+    line(37.0, -102.0, 37.0, -94.6)
+    // Nebraska / Kansas ~ 40
+    line(40.0, -102.0, 40.0, -95.3)
+    // South Dakota / Nebraska ~ 43
+    line(43.0, -104.0, 43.0, -96.4)
+    // North Dakota / South Dakota ~ 46
+    line(46.0, -104.0, 46.0, -96.5)
+    // Montana / Wyoming ~ 45
+    line(45.0, -111.0, 45.0, -104.0)
+    // Oregon / California ~ 42
+    line(42.0, -124.3, 42.0, -117.0)
+    // Arizona / Utah ~ 37 (partial)
+    line(37.0, -114.0, 37.0, -109.0)
+    // Colorado box
+    line(41.0, -109.0, 41.0, -102.0)
+    line(37.0, -109.0, 37.0, -102.0)
+    line(41.0, -109.0, 37.0, -109.0)
+    line(41.0, -102.0, 37.0, -102.0)
+    // Idaho / Montana ~ 46.5 -116 to -111
+    line(46.5, -116.0, 46.5, -111.4)
+    // Washington / Oregon ~ 46
+    line(46.2, -124.0, 46.2, -117.0)
+
+    // Major vertical lines
+    // Mississippi River approx
+    line(47.0, -90.0, 29.0, -90.0)
+    // Texas / NM ~ -103
+    line(36.5, -103.0, 32.0, -103.0)
+    // Arizona / NM ~ -109
+    line(37.0, -109.0, 31.3, -109.0)
+    // Nevada / Utah ~ -114
+    line(42.0, -114.0, 37.0, -114.0)
+    // Idaho / Oregon ~ -117
+    line(46.2, -117.0, 42.0, -117.0)
+}
+
+// ===========================================================================
+// Major US cities — small dots with labels
+// ===========================================================================
+
+private fun DrawScope.drawMajorCities(w: Float, h: Float, pad: Float, measurer: androidx.compose.ui.text.TextMeasurer) {
+    val dotColor = Color(0xFF2A5A7E)
+    val style = TextStyle(color = Color(0xFF2A5A7E), fontSize = 7.sp, fontFamily = FontFamily.Monospace)
+
+    data class City(val name: String, val lat: Double, val lon: Double)
+    val cities = listOf(
+        City("NYC", 40.7, -74.0),
+        City("LA", 34.1, -118.2),
+        City("CHI", 41.9, -87.6),
+        City("HOU", 29.8, -95.4),
+        City("PHX", 33.4, -112.1),
+        City("SEA", 47.6, -122.3),
+        City("MIA", 25.8, -80.2),
+        City("DEN", 39.7, -105.0),
+        City("ATL", 33.7, -84.4),
+        City("DFW", 32.8, -96.8),
+        City("SF", 37.8, -122.4),
+        City("DC", 38.9, -77.0),
+        City("BOS", 42.4, -71.1),
+        City("LV", 36.2, -115.1),
+        City("MSP", 44.9, -93.3),
+        City("STL", 38.6, -90.2),
+    )
+
+    cities.forEach { c ->
+        val pt = project(c.lat, c.lon, w, h, pad)
+        drawCircle(dotColor, 2.5f, pt)
+        val result = measurer.measure(c.name, style)
+        drawText(result, topLeft = Offset(pt.x + 5f, pt.y - 5f))
     }
 }
 
-// ---------------------------------------------------------------------------
-// Great-circle arc with animated data packets
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Vertical scan line (sweeps left to right)
+// ===========================================================================
 
-private fun DrawScope.drawGreatCircleArc(from: Offset, to: Offset, t: Float, w: Float, h: Float) {
+private fun DrawScope.drawVerticalScanLine(w: Float, h: Float, t: Float) {
+    val x = t * w
+    drawLine(
+        brush = Brush.verticalGradient(
+            listOf(Color.Transparent, DragonCyan.copy(alpha = 0.12f), DragonCyan.copy(alpha = 0.2f),
+                DragonCyan.copy(alpha = 0.12f), Color.Transparent)
+        ),
+        start = Offset(x, 0f), end = Offset(x, h), strokeWidth = 2f
+    )
+    // trailing fade
+    drawRect(
+        brush = Brush.horizontalGradient(
+            listOf(DragonCyan.copy(alpha = 0.04f), Color.Transparent),
+            startX = x - 30f, endX = x
+        ),
+        topLeft = Offset(x - 30f, 0f),
+        size = androidx.compose.ui.geometry.Size(30f, h)
+    )
+}
+
+// ===========================================================================
+// Light beam — the hero visual effect
+// ===========================================================================
+
+private fun DrawScope.drawLightBeam(from: Offset, to: Offset, t: Float) {
     val dx = to.x - from.x
     val dy = to.y - from.y
     val dist = sqrt(dx * dx + dy * dy)
+    val arcH = min(dist * 0.35f, 100f)
+    val mid = Offset((from.x + to.x) / 2, min(from.y, to.y) - arcH)
 
-    // Arc height scales with distance
-    val arcH = min(dist * 0.3f, 80f)
-    val midX = (from.x + to.x) / 2
-    val midY = min(from.y, to.y) - arcH
-    val ctrl = Offset(midX, midY)
-
-    // Full path
     val path = Path().apply {
         moveTo(from.x, from.y)
-        quadraticTo(ctrl.x, ctrl.y, to.x, to.y)
+        quadraticTo(mid.x, mid.y, to.x, to.y)
     }
 
-    // Ambient glow (wide, faint)
+    // Layer 1: Wide ambient glow
+    drawPath(path, DragonCyan.copy(alpha = 0.04f), style = Stroke(20f, cap = StrokeCap.Round))
     drawPath(path, DragonCyan.copy(alpha = 0.06f), style = Stroke(12f, cap = StrokeCap.Round))
     drawPath(path, DragonCyan.copy(alpha = 0.10f), style = Stroke(6f, cap = StrokeCap.Round))
 
-    // Base arc
-    drawPath(path, DragonCyan.copy(alpha = 0.25f), style = Stroke(2f, cap = StrokeCap.Round))
+    // Layer 2: Core beam
+    drawPath(path, DragonCyan.copy(alpha = 0.30f), style = Stroke(2.5f, cap = StrokeCap.Round))
 
-    // Animated bright segment
+    // Layer 3: Animated bright segment ("energy pulse")
     val pm = PathMeasure().apply { setPath(path, false) }
     val len = pm.length
     if (len > 0) {
-        val segLen = len * 0.12f
+        // Primary pulse
+        val segLen = len * 0.08f
         val start = (t * len) % len
         val end = min(start + segLen, len)
         val seg = Path()
         pm.getSegment(start, end, seg, true)
-        drawPath(seg, DragonCyan, style = Stroke(3f, cap = StrokeCap.Round))
+        drawPath(seg, DragonCyan, style = Stroke(4f, cap = StrokeCap.Round))
+        drawPath(seg, Color.White.copy(alpha = 0.6f), style = Stroke(2f, cap = StrokeCap.Round))
+
+        // Secondary pulse (offset)
+        val s2 = ((t + 0.5f) * len) % len
+        val e2 = min(s2 + segLen * 0.6f, len)
+        val seg2 = Path()
+        pm.getSegment(s2, e2, seg2, true)
+        drawPath(seg2, DragonCyan.copy(alpha = 0.7f), style = Stroke(3f, cap = StrokeCap.Round))
     }
 
-    // Data packets (5 traveling dots with trails)
-    for (i in 0..4) {
-        val pt = ((t + i * 0.2f) % 1f)
-        val pos = bezierPoint(from, ctrl, to, pt)
-        val trail = bezierPoint(from, ctrl, to, (pt - 0.02f).coerceIn(0f, 1f))
-        // Trail
-        drawLine(DragonCyan.copy(alpha = 0.4f), trail, pos, strokeWidth = 1.5f)
-        // Dot
+    // Layer 4: Data packets — 6 traveling dots
+    for (i in 0..5) {
+        val pt = ((t + i * 0.167f) % 1f)
+        val pos = qBez(from, mid, to, pt)
+        val trail = qBez(from, mid, to, (pt - 0.015f).coerceIn(0f, 1f))
+        drawLine(DragonCyan.copy(alpha = 0.5f), trail, pos, 1.5f)
         drawCircle(DragonCyan, 3f, pos)
         drawCircle(Color.White, 1.5f, pos)
     }
 
-    // Reverse packets (server → client, dimmer)
-    for (i in 0..2) {
-        val pt = ((1f - t + i * 0.33f) % 1f)
-        val pos = bezierPoint(from, ctrl, to, pt)
-        drawCircle(StatusConnected.copy(alpha = 0.6f), 2f, pos)
+    // Layer 5: Reverse flow (server → client) — dimmer green
+    for (i in 0..3) {
+        val pt = ((1f - t + i * 0.25f) % 1f)
+        val pos = qBez(from, mid, to, pt)
+        drawCircle(StatusConnected.copy(alpha = 0.5f), 2f, pos)
     }
 }
 
-private fun bezierPoint(from: Offset, ctrl: Offset, to: Offset, t: Float): Offset {
+private fun qBez(a: Offset, c: Offset, b: Offset, t: Float): Offset {
     val u = 1f - t
-    return Offset(
-        u * u * from.x + 2 * u * t * ctrl.x + t * t * to.x,
-        u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y
-    )
+    return Offset(u*u*a.x + 2*u*t*c.x + t*t*b.x, u*u*a.y + 2*u*t*c.y + t*t*b.y)
 }
 
-// ---------------------------------------------------------------------------
-// Radar sweep at node
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// User node — pulsing concentric rings + crosshair
+// ===========================================================================
 
-private fun DrawScope.drawRadarSweep(center: Offset, angle: Float, color: Color) {
-    val radius = 35f
-    val sweepRadians = Math.toRadians(angle.toDouble())
-    val endX = center.x + radius * cos(sweepRadians).toFloat()
-    val endY = center.y + radius * sin(sweepRadians).toFloat()
+private fun DrawScope.drawUserNode(c: Offset, color: Color, pr: Float, pa: Float) {
+    // Outer pulse rings (3 concentric)
+    drawCircle(color.copy(alpha = pa * 0.2f), pr * 1.5f, c)
+    drawCircle(color.copy(alpha = pa * 0.35f), pr, c)
+    drawCircle(color.copy(alpha = pa * 0.5f), pr * 0.6f, c)
 
-    // Fading radar cone (30° sweep)
-    for (i in 0..15) {
-        val a = angle - i * 2f
-        val r = Math.toRadians(a.toDouble())
-        val ex = center.x + radius * cos(r).toFloat()
-        val ey = center.y + radius * sin(r).toFloat()
-        drawLine(
-            color.copy(alpha = (0.15f - i * 0.01f).coerceAtLeast(0f)),
-            center, Offset(ex, ey), strokeWidth = 1f
-        )
+    // Crosshair
+    val ch = 18f
+    val chColor = color.copy(alpha = 0.5f)
+    drawLine(chColor, Offset(c.x - ch, c.y), Offset(c.x - 7f, c.y), 0.8f)
+    drawLine(chColor, Offset(c.x + 7f, c.y), Offset(c.x + ch, c.y), 0.8f)
+    drawLine(chColor, Offset(c.x, c.y - ch), Offset(c.x, c.y - 7f), 0.8f)
+    drawLine(chColor, Offset(c.x, c.y + 7f), Offset(c.x, c.y + ch), 0.8f)
+
+    // Targeting ring
+    drawCircle(color.copy(alpha = 0.6f), 10f, c, style = Stroke(1.5f))
+
+    // Core dot (bright, glowing)
+    drawCircle(color, 5f, c)
+    drawCircle(Color.White, 3f, c)
+}
+
+// ===========================================================================
+// Server node — pulsing diamond shape
+// ===========================================================================
+
+private fun DrawScope.drawServerNode(c: Offset, color: Color, pr: Float, pa: Float) {
+    // Pulse
+    drawCircle(color.copy(alpha = pa * 0.3f), pr * 1.3f, c)
+    drawCircle(color.copy(alpha = pa * 0.5f), pr, c)
+
+    // Diamond shape
+    val d = 10f
+    val diamond = Path().apply {
+        moveTo(c.x, c.y - d)
+        lineTo(c.x + d, c.y)
+        lineTo(c.x, c.y + d)
+        lineTo(c.x - d, c.y)
+        close()
+    }
+    drawPath(diamond, color.copy(alpha = 0.3f))
+    drawPath(diamond, color, style = Stroke(1.5f))
+
+    // Core
+    drawCircle(color, 4f, c)
+    drawCircle(Color.White, 2f, c)
+}
+
+// ===========================================================================
+// Radar sweep at server
+// ===========================================================================
+
+private fun DrawScope.drawRadar(center: Offset, angle: Float, color: Color) {
+    val r = 40f
+    val rad = Math.toRadians(angle.toDouble())
+
+    // Fading sweep cone
+    for (i in 0..20) {
+        val a = angle - i * 1.5f
+        val ar = Math.toRadians(a.toDouble())
+        val ex = center.x + r * cos(ar).toFloat()
+        val ey = center.y + r * sin(ar).toFloat()
+        drawLine(color.copy(alpha = (0.12f - i * 0.006f).coerceAtLeast(0f)),
+            center, Offset(ex, ey), 0.8f)
     }
     // Leading edge
-    drawLine(color.copy(alpha = 0.4f), center, Offset(endX, endY), strokeWidth = 1.5f)
+    val edgeX = center.x + r * cos(rad).toFloat()
+    val edgeY = center.y + r * sin(rad).toFloat()
+    drawLine(color.copy(alpha = 0.35f), center, Offset(edgeX, edgeY), 1.5f)
 
     // Range rings
-    drawCircle(color.copy(alpha = 0.08f), radius, center, style = Stroke(0.5f))
-    drawCircle(color.copy(alpha = 0.05f), radius * 0.6f, center, style = Stroke(0.5f))
-    drawCircle(color.copy(alpha = 0.03f), radius * 1.4f, center, style = Stroke(0.5f))
+    drawCircle(color.copy(alpha = 0.06f), r, center, style = Stroke(0.5f))
+    drawCircle(color.copy(alpha = 0.04f), r * 0.5f, center, style = Stroke(0.5f))
+    drawCircle(color.copy(alpha = 0.03f), r * 1.5f, center, style = Stroke(0.5f))
 }
 
-// ---------------------------------------------------------------------------
-// SOC Node with crosshair
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Coordinate labels near nodes
+// ===========================================================================
 
-private fun DrawScope.drawSOCNode(
-    center: Offset, color: Color, pulseR: Float, pulseA: Float, label: String
+private fun DrawScope.drawCoordLabels(
+    pt: Offset, geo: GeoIpResponse,
+    measurer: androidx.compose.ui.text.TextMeasurer, color: Color
 ) {
-    // Outer pulse
-    drawCircle(color.copy(alpha = pulseA * 0.3f), pulseR, center)
-    // Crosshair
-    val ch = 14f
-    drawLine(color.copy(alpha = 0.4f), Offset(center.x - ch, center.y), Offset(center.x + ch, center.y), 0.8f)
-    drawLine(color.copy(alpha = 0.4f), Offset(center.x, center.y - ch), Offset(center.x, center.y + ch), 0.8f)
-    // Inner ring
-    drawCircle(color.copy(alpha = 0.5f), 9f, center, style = Stroke(1.2f))
-    // Core
-    drawCircle(color, 4.5f, center)
-    drawCircle(Color.White, 2f, center)
+    val label = "%.2f, %.2f".format(geo.latitude, geo.longitude)
+    val style = TextStyle(
+        color = color.copy(alpha = 0.6f),
+        fontSize = 7.sp,
+        fontFamily = FontFamily.Monospace
+    )
+    val result = measurer.measure(label, style)
+    drawText(result, topLeft = Offset(pt.x + 14f, pt.y + 8f))
 }
