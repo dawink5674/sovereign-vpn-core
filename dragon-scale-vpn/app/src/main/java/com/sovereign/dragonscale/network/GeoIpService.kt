@@ -106,4 +106,80 @@ object GeoIpClient {
             throw Exception("All GeoIP APIs failed for $ip")
         }
     }
+
+    /**
+     * Creates a temporary API instance configured to bypass the VPN tunnel,
+     * ensuring we get the physical public ISP address.
+     */
+    fun getBypassApi(context: android.content.Context): IpApiCoApi {
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val networks = cm.allNetworks
+        var bypassNetwork: android.net.Network? = null
+        
+        // Find an internet-capable network that IS NOT a VPN
+        for (network in networks) {
+            val caps = cm.getNetworkCapabilities(network)
+            if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                bypassNetwork = network
+                break
+            }
+        }
+
+        val clientBuilder = okhttp3.OkHttpClient.Builder()
+        if (bypassNetwork != null) {
+            clientBuilder.socketFactory(bypassNetwork.socketFactory)
+            // MUST override Dns as well, otherwise OkHttp uses the default VPN network for DNS which will timeout
+            clientBuilder.dns(object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<java.net.InetAddress> {
+                    return try {
+                        bypassNetwork.getAllByName(hostname).toList()
+                    } catch (e: Exception) {
+                        okhttp3.Dns.SYSTEM.lookup(hostname)
+                    }
+                }
+            })
+        }
+        val client = clientBuilder.build()
+
+        val primary = Retrofit.Builder()
+            .baseUrl("https://ipapi.co/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(IpApiCoApi::class.java)
+
+        val fallback = Retrofit.Builder()
+            .baseUrl("http://ip-api.com/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(IpApiComApi::class.java)
+
+        return object : IpApiCoApi {
+            override suspend fun lookupSelf(): GeoIpResponse {
+                try {
+                    val r = primary.lookupSelf()
+                    if (!r.error && r.latitude != 0.0) return r.normalized()
+                } catch (_: Exception) {}
+                try {
+                    val r = fallback.lookupSelf()
+                    if (r.lat != 0.0) return r.normalized()
+                } catch (_: Exception) {}
+                throw Exception("All GeoIP APIs bypass failed")
+            }
+
+            override suspend fun lookup(ip: String): GeoIpResponse {
+                try {
+                    val r = primary.lookup(ip)
+                    if (!r.error && r.latitude != 0.0) return r.normalized()
+                } catch (_: Exception) {}
+                try {
+                    val r = fallback.lookup(ip)
+                    if (r.lat != 0.0) return r.normalized()
+                } catch (_: Exception) {}
+                throw Exception("All GeoIP APIs bypass failed for $ip")
+            }
+        }
+    }
 }
