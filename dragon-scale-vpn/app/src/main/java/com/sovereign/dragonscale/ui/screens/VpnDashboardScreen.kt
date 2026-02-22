@@ -79,26 +79,12 @@ fun VpnDashboardScreen(
     }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
 
-    // Tracker for server IP
-    val serverIp = remember(vpnState) { vpnManager.getServerIp() ?: "35.206.67.49" }
-
     // --- Fetch real user location BEFORE VPN connects ---
     // This runs once at dashboard creation, capturing the user's real public IP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
-    var geoError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         if (preVpnUserLoc == null) {
-            // Retry up to 3 times with delay
-            for (attempt in 1..3) {
-                try {
-                    preVpnUserLoc = GeoIpClient.lookupSelfBypassVpn(context)
-                    geoError = null
-                    break
-                } catch (e: Exception) {
-                    geoError = "GeoIP attempt $attempt: ${e.message}"
-                    kotlinx.coroutines.delay(3000L)
-                }
-            }
+            try { preVpnUserLoc = GeoIpClient.api.lookupSelf() } catch (_: Exception) {}
         }
     }
 
@@ -234,8 +220,7 @@ fun VpnDashboardScreen(
             txRate = txRate,
             networkType = networkType,
             lastHandshake = lastHandshake,
-            preVpnUserLoc = preVpnUserLoc,
-            serverIp = serverIp
+            preVpnUserLoc = preVpnUserLoc
         )
     } else {
         FoldedLayout(
@@ -251,8 +236,7 @@ fun VpnDashboardScreen(
             txRate = txRate,
             networkType = networkType,
             lastHandshake = lastHandshake,
-            preVpnUserLoc = preVpnUserLoc,
-            serverIp = serverIp
+            preVpnUserLoc = preVpnUserLoc
         )
     }
 }
@@ -276,8 +260,7 @@ private fun ExpandedLayout(
     txRate: String,
     networkType: String,
     lastHandshake: String,
-    preVpnUserLoc: GeoIpResponse? = null,
-    serverIp: String
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val isConnected = vpnState == Tunnel.State.UP
 
@@ -341,8 +324,7 @@ private fun ExpandedLayout(
                     networkType = networkType,
                     lastHandshake = lastHandshake,
                     isConnected = isConnected,
-                    preVpnUserLoc = preVpnUserLoc,
-                    serverIp = serverIp
+                    preVpnUserLoc = preVpnUserLoc
                 )
             }
         }
@@ -368,8 +350,7 @@ private fun FoldedLayout(
     txRate: String,
     networkType: String,
     lastHandshake: String,
-    preVpnUserLoc: GeoIpResponse? = null,
-    serverIp: String
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val isConnected = vpnState == Tunnel.State.UP
     var currentPage by remember { mutableStateOf(FoldedPage.CONNECTION) }
@@ -505,7 +486,7 @@ private fun FoldedLayout(
                             .padding(padding)
                             .padding(16.dp)
                     ) {
-                        ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc, serverIp = serverIp)
+                        ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc)
                     }
                 }
             }
@@ -549,8 +530,7 @@ private fun SwipeableStatsPanel(
     networkType: String,
     lastHandshake: String,
     isConnected: Boolean,
-    preVpnUserLoc: GeoIpResponse? = null,
-    serverIp: String
+    preVpnUserLoc: GeoIpResponse? = null
 ) {
     val pagerState = rememberPagerState(pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -613,7 +593,7 @@ private fun SwipeableStatsPanel(
             when (page) {
                 0 -> TunnelStatusCard(vpnState, rxBytes, txBytes, rxRate, txRate, networkType, lastHandshake)
                 1 -> EnhancedRoutingLog(logEntries)
-                2 -> ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc, serverIp = serverIp)
+                2 -> ThreatMapPanel(isConnected = isConnected, preVpnUserLoc = preVpnUserLoc)
             }
         }
     }

@@ -263,51 +263,8 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   });
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Control Plane API listening on port ${PORT}`);
   console.log(`Zero-Trust mode: clients generate their own keys`);
   console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
-
-  // Fetch active peers from the live WireGuard server to rebuild state
-  // This prevents 'nextIP' from resetting to 2 inside stateless Cloud Run containers
-  if (WG_SSH_KEY) {
-    try {
-      console.log('Synchronizing WireGuard peer states...');
-      const output = await sshExec(`sudo wg show ${WG_INTERFACE} allowed-ips`);
-      
-      const lines = output.split('\n');
-      let maxIP = 1;
-      
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const [pubKey, ips] = line.trim().split(/\s+/);
-        if (!ips) continue;
-        
-        const ipList = ips.split(',');
-        for (const ipStr of ipList) {
-          if (ipStr.startsWith(VPN_SUBNET)) {
-            const suffix = parseInt(ipStr.split('/')[0].split('.')[3]);
-            if (!isNaN(suffix) && suffix > maxIP) {
-              maxIP = suffix;
-            }
-            
-            // Re-hydrate the peers map
-            if (!peers.has(pubKey)) {
-              peers.set(pubKey, {
-                name: `synced-peer-${suffix}`,
-                publicKey: pubKey,
-                assignedIP: ipStr,
-                createdAt: new Date().toISOString()
-              });
-            }
-          }
-        }
-      }
-      
-      nextIP = maxIP + 1;
-      console.log(`✅ Synced ${peers.size} active peers from ${WG_INTERFACE}. Next IP assigned will be ${VPN_SUBNET}.${nextIP}`);
-    } catch (err) {
-      console.error(`⚠️ Failed to sync peers from WireGuard server: ${err.message}`);
-    }
-  }
 });

@@ -48,19 +48,11 @@ fun ThreatMapPanel(
     var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Fetch server location only when connected — with retry
-    var serverError by remember { mutableStateOf<String?>(null) }
+    // Fetch server location only when connected
     LaunchedEffect(isConnected) {
         if (isConnected && serverLoc == null) {
-            for (attempt in 1..3) {
-                try {
-                    serverLoc = GeoIpClient.api.lookup(serverIp)
-                    serverError = null
-                    break
-                } catch (e: Exception) {
-                    serverError = "Server GeoIP attempt $attempt: ${e.message}"
-                    kotlinx.coroutines.delay(2000L)
-                }
+            scope.launch {
+                try { serverLoc = GeoIpClient.api.lookup(serverIp) } catch (_: Exception) {}
             }
         }
     }
@@ -73,21 +65,10 @@ fun ThreatMapPanel(
         ) {
             Text("THREAT MAP — CONUS", style = MaterialTheme.typography.labelLarge.copy(
                 letterSpacing = 2.sp), color = TextMuted)
-            if (isConnected && userLoc != null && serverLoc != null) {
-                Text("${userLoc.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
+            if (isConnected && userLoc != null) {
+                Text("${userLoc?.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace, fontSize = 9.sp
                 ), color = DragonCyan)
-            } else if (isConnected) {
-                // Show loading/error state
-                val msg = when {
-                    userLoc == null && serverError != null -> "GeoIP: retrying..."
-                    userLoc == null -> "Locating user..."
-                    serverLoc == null -> "Locating server..."
-                    else -> "Loading..."
-                }
-                Text(msg, style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace, fontSize = 9.sp
-                ), color = Color(0xFFFF9800))
             }
         }
 

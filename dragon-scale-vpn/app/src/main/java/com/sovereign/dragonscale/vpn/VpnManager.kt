@@ -252,14 +252,6 @@ class VpnManager(private val context: Context) {
      * Check if device is registered.
      */
     fun isRegistered(): Boolean = cryptoManager.hasKeyPair() && encryptedPrefs.getAssignedIP() != null
-
-    /**
-     * Get the server IP by extracting it from the stored endpoint (removes port).
-     */
-    fun getServerIp(): String? {
-        val endpoint = encryptedPrefs.getServerEndpoint() ?: return null
-        return endpoint.substringBefore(":")
-    }
 }
 
 /**
