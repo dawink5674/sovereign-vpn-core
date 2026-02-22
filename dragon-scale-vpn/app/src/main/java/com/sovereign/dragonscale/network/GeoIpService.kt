@@ -108,78 +108,80 @@ object GeoIpClient {
     }
 
     /**
-     * Creates a temporary API instance configured to bypass the VPN tunnel,
-     * ensuring we get the physical public ISP address.
+     * Attempts to look up the user's REAL (non-VPN) IP by bypassing the VPN tunnel.
+     * Uses Android ConnectivityManager to find the underlying Wi-Fi/Cellular network.
+     *
+     * If bypass fails for any reason (no non-VPN network found, DNS failure, etc.),
+     * falls back to the standard [api] client.
      */
-    fun getBypassApi(context: android.content.Context): IpApiCoApi {
-        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val networks = cm.allNetworks
-        var bypassNetwork: android.net.Network? = null
-        
-        // Find an internet-capable network that IS NOT a VPN
-        for (network in networks) {
-            val caps = cm.getNetworkCapabilities(network)
-            if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
-                bypassNetwork = network
-                break
-            }
-        }
+    suspend fun lookupSelfBypassVpn(context: android.content.Context): GeoIpResponse {
+        // Step 1: Try via a VPN-bypassing OkHttp client
+        try {
+            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                    as android.net.ConnectivityManager
 
-        val clientBuilder = okhttp3.OkHttpClient.Builder()
-        if (bypassNetwork != null) {
-            clientBuilder.socketFactory(bypassNetwork.socketFactory)
-            // MUST override Dns as well, otherwise OkHttp uses the default VPN network for DNS which will timeout
-            clientBuilder.dns(object : okhttp3.Dns {
-                override fun lookup(hostname: String): List<java.net.InetAddress> {
-                    return try {
-                        bypassNetwork.getAllByName(hostname).toList()
-                    } catch (e: Exception) {
-                        okhttp3.Dns.SYSTEM.lookup(hostname)
-                    }
+            @Suppress("DEPRECATION")
+            val networks = cm.allNetworks
+            var bypassNetwork: android.net.Network? = null
+
+            for (network in networks) {
+                val caps = cm.getNetworkCapabilities(network)
+                if (caps != null &&
+                    caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+                ) {
+                    bypassNetwork = network
+                    break
                 }
-            })
-        }
-        val client = clientBuilder.build()
-
-        val primary = Retrofit.Builder()
-            .baseUrl("https://ipapi.co/")
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(IpApiCoApi::class.java)
-
-        val fallback = Retrofit.Builder()
-            .baseUrl("http://ip-api.com/")
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(IpApiComApi::class.java)
-
-        return object : IpApiCoApi {
-            override suspend fun lookupSelf(): GeoIpResponse {
-                try {
-                    val r = primary.lookupSelf()
-                    if (!r.error && r.latitude != 0.0) return r.normalized()
-                } catch (_: Exception) {}
-                try {
-                    val r = fallback.lookupSelf()
-                    if (r.lat != 0.0) return r.normalized()
-                } catch (_: Exception) {}
-                throw Exception("All GeoIP APIs bypass failed")
             }
 
-            override suspend fun lookup(ip: String): GeoIpResponse {
+            if (bypassNetwork != null) {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .socketFactory(bypassNetwork.socketFactory)
+                    .dns(object : okhttp3.Dns {
+                        override fun lookup(hostname: String): List<java.net.InetAddress> {
+                            return try {
+                                bypassNetwork.getAllByName(hostname).toList()
+                            } catch (_: Exception) {
+                                okhttp3.Dns.SYSTEM.lookup(hostname)
+                            }
+                        }
+                    })
+                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+
+                // Try ipapi.co via bypass
                 try {
-                    val r = primary.lookup(ip)
+                    val bypassPrimary = Retrofit.Builder()
+                        .baseUrl("https://ipapi.co/")
+                        .client(client)
+                        .addConverterFactory(GsonConverterFactory.create())
+                        .build()
+                        .create(IpApiCoApi::class.java)
+
+                    val r = bypassPrimary.lookupSelf()
                     if (!r.error && r.latitude != 0.0) return r.normalized()
                 } catch (_: Exception) {}
+
+                // Try ip-api.com via bypass
                 try {
-                    val r = fallback.lookup(ip)
+                    val bypassFallback = Retrofit.Builder()
+                        .baseUrl("http://ip-api.com/")
+                        .client(client)
+                        .addConverterFactory(GsonConverterFactory.create())
+                        .build()
+                        .create(IpApiComApi::class.java)
+
+                    val r = bypassFallback.lookupSelf()
                     if (r.lat != 0.0) return r.normalized()
                 } catch (_: Exception) {}
-                throw Exception("All GeoIP APIs bypass failed for $ip")
             }
+        } catch (_: Exception) {
+            // Bypass setup itself failed — fall through to standard API
         }
+
+        // Step 2: Graceful fallback — use the standard API
+        return api.lookupSelf()
     }
 }

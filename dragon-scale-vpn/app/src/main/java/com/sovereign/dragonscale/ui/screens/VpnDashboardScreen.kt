@@ -91,7 +91,7 @@ fun VpnDashboardScreen(
             // Retry up to 3 times with delay
             for (attempt in 1..3) {
                 try {
-                    preVpnUserLoc = GeoIpClient.getBypassApi(context).lookupSelf()
+                    preVpnUserLoc = GeoIpClient.lookupSelfBypassVpn(context)
                     geoError = null
                     break
                 } catch (e: Exception) {
