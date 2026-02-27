@@ -52,8 +52,23 @@ fun ThreatMapPanel(
     LaunchedEffect(isConnected) {
         if (isConnected && serverLoc == null) {
             scope.launch {
-                try { serverLoc = GeoIpClient.api.lookup(serverIp) } catch (_: Exception) {}
+                // Wait for WireGuard to fully establish routes
+                kotlinx.coroutines.delay(1500)
+                var attempts = 0
+                while (serverLoc == null && attempts < 4 && isConnected) {
+                    try {
+                        val loc = GeoIpClient.api.lookup(serverIp)
+                        if (loc.latitude != 0.0) serverLoc = loc
+                    } catch (_: Exception) {}
+
+                    if (serverLoc == null) {
+                        attempts++
+                        if (attempts < 4) kotlinx.coroutines.delay(2000)
+                    }
+                }
             }
+        } else if (!isConnected) {
+            serverLoc = null // Clear map destination pin when disconnected
         }
     }
 

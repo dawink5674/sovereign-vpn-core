@@ -86,8 +86,17 @@ fun VpnDashboardScreen(
     // Uses ConnectivityManager to find Wi-Fi/Cellular and bypass VPN for GeoIP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     LaunchedEffect(Unit) {
-        if (preVpnUserLoc == null) {
-            try { preVpnUserLoc = GeoIpClient.lookupSelfBypassVpn(context) } catch (_: Exception) {}
+        var attempts = 0
+        while (preVpnUserLoc == null && attempts < 5) {
+            try {
+                val loc = GeoIpClient.lookupSelfBypassVpn(context)
+                if (loc.latitude != 0.0) preVpnUserLoc = loc
+            } catch (_: Exception) {}
+
+            if (preVpnUserLoc == null) {
+                attempts++
+                if (attempts < 5) kotlinx.coroutines.delay(2000)
+            }
         }
     }
 
