@@ -30,12 +30,12 @@ If the change impacts connectivity, UI, security, or infrastructure:
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"; .\gradlew assembleDebug
 ```
 
-2. Run a Firebase robo test:
+2. Run a Firebase robo test on the user's primary device (Pixel 10 Pro Fold):
 ```bash
 gcloud firebase test android run --type=robo \
   --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
-  --device model=MediumPhone.arm,version=34 \
-  --timeout=300s
+  --device "model=rango,version=36" \
+  --timeout=300s --project=cloud-vpn-12110
 ```
 
 3. Review the test results URL provided in the output.

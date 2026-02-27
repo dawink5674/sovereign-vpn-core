@@ -7,7 +7,9 @@ description: Automated Android testing via Firebase Test Lab — robo tests, ins
 
 ## Overview
 
-Firebase Test Lab replaces Jules as the primary testing mechanism for the Dragon Scale VPN project. It runs tests on real and virtual Android devices in Google's cloud infrastructure, providing screenshots, logs, video recordings, and crash reports.
+Firebase Test Lab is the primary testing mechanism for the Dragon Scale VPN project. It runs tests on real and virtual Android devices in Google's cloud infrastructure, providing screenshots, logs, video recordings, and crash reports.
+
+**Primary Test Device:** Pixel 10 Pro Fold (codename `rango`, API 36, physical device)
 
 ## Core Commands
 
@@ -16,21 +18,25 @@ Firebase Test Lab replaces Jules as the primary testing mechanism for the Dragon
 Robo tests automatically crawl the app UI and detect crashes, layout issues, and ANRs.
 
 ```bash
-# Basic robo test on a virtual device
-gcloud firebase test android run \
-  --type=robo \
+# Primary: Pixel 10 Pro Fold (user's actual device)
+gcloud firebase test android run --type=robo \
   --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
-  --device model=Pixel2,version=30,locale=en,orientation=portrait \
-  --timeout=300s
+  --device "model=rango,version=36,locale=en,orientation=portrait" \
+  --timeout=300s --project=cloud-vpn-12110
 
-# Multi-device matrix (test on several configs simultaneously)
-gcloud firebase test android run \
-  --type=robo \
+# Secondary: Medium Phone virtual device (API 34, fast feedback)
+gcloud firebase test android run --type=robo \
   --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
-  --device model=Pixel2,version=30 \
-  --device model=Pixel6,version=33 \
-  --device model=MediumPhone.arm,version=34 \
-  --timeout=300s
+  --device "model=MediumPhone.arm,version=34" \
+  --timeout=300s --project=cloud-vpn-12110
+
+# Full matrix: Pixel 10 Pro Fold + Medium Phone + Pixel Fold (legacy foldable)
+gcloud firebase test android run --type=robo \
+  --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
+  --device "model=rango,version=36" \
+  --device "model=MediumPhone.arm,version=34" \
+  --device "model=felix,version=34" \
+  --timeout=300s --project=cloud-vpn-12110
 ```
 
 ### 2. Running Instrumentation Tests
@@ -42,34 +48,31 @@ For targeted verification of specific features (GeoIP, NetworkMonitor, etc.).
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 .\gradlew assembleDebug assembleDebugAndroidTest
 
-# Run instrumentation tests
-gcloud firebase test android run \
-  --type=instrumentation \
+# Run on Pixel 10 Pro Fold
+gcloud firebase test android run --type=instrumentation \
   --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
   --test=dragon-scale-vpn/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
-  --device model=Pixel2,version=30 \
-  --timeout=600s
+  --device "model=rango,version=36" \
+  --timeout=600s --project=cloud-vpn-12110
 ```
 
 ### 3. Viewing Results
 
 ```bash
 # List recent test runs
-gcloud firebase test android list
+gcloud firebase test android list --project=cloud-vpn-12110
 
 # Get detailed results (URL provided after test run)
-gcloud firebase test android results describe <TEST_MATRIX_ID>
+gcloud firebase test android results describe <TEST_MATRIX_ID> --project=cloud-vpn-12110
 ```
 
-### 4. Available Virtual Devices
+## Device Matrix
 
-```bash
-# List all available device models
-gcloud firebase test android models list
-
-# List available API versions
-gcloud firebase test android versions list
-```
+| Priority | Model ID | Device Name | API | Type |
+|----------|----------|-------------|-----|------|
+| **Primary** | `rango` | Pixel 10 Pro Fold | 36 | Physical |
+| Secondary | `MediumPhone.arm` | Medium Phone 6.4" | 34 | Virtual |
+| Foldable Legacy | `felix` | Pixel Fold | 34 | Physical |
 
 ## Testing Strategy for Dragon Scale VPN
 
@@ -79,18 +82,12 @@ gcloud firebase test android versions list
 - **App stability** — Crash detection, ANR detection, memory leaks
 - **Navigation** — Drawer menu, pager swipes, button states
 - **Registration flow** — API calls to control plane (mock or real)
+- **Foldable posture** — Fold/unfold behavior on Pixel 10 Pro Fold
 
 ### What Firebase CANNOT Test
 - **Active VPN tunnel** — `VpnService.prepare()` shows a system dialog that can't be auto-dismissed
 - **VPN bypass networking** — Requires an active WireGuard tunnel
 - **Download/upload stats** — Requires live tunnel traffic
-
-### Recommended Test Matrix
-
-For each build, run:
-1. **Robo test** on 2-3 device models (catches crashes and UI issues)
-2. **Instrumentation tests** for GeoIP, NetworkMonitor, and CryptoManager logic
-3. **Manual sideload** on physical device for VPN tunnel verification
 
 ## Integration with Dev Workflow
 
@@ -99,25 +96,21 @@ For each build, run:
 When changes impact UI, networking, or stability:
 
 ```bash
-# 1. Build both APKs
-.\gradlew assembleDebug assembleDebugAndroidTest
+# 1. Build APK
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"; .\gradlew assembleDebug
 
-# 2. Run robo test
+# 2. Run robo test on Pixel 10 Pro Fold
 gcloud firebase test android run --type=robo \
   --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
-  --device model=MediumPhone.arm,version=34
+  --device "model=rango,version=36" --project=cloud-vpn-12110
 
-# 3. Review results
-# Firebase provides a URL in the output — open it to view
-# screenshots, video recordings, logs, and crash traces.
+# 3. Review the results URL in the output
 ```
 
 ### Senior Decision Logic
 
 1. **Discovery (Gemini):** Architect determines the minimal change required.
 2. **Implementation (Gemini):** Execute code changes locally.
-3. **Verification (Firebase):** Run robo/instrumentation tests to validate stability before pushing.
-4. **Manual Verification:** Sideload APK on physical device for VPN-specific testing.
+3. **Verification (Firebase):** Run robo/instrumentation tests on Pixel 10 Pro Fold to validate.
+4. **Manual Verification:** Sideload APK on physical Pixel 10 Pro Fold for VPN-specific testing.
 5. **Deployment:** Only push to GitHub after both automated and manual verification pass.
-
-> **Conclusion:** Firebase Test Lab handles automated crash detection, UI validation, and unit testing. Manual physical-device testing remains necessary for VPN tunnel-specific behavior. Both gates must pass before a commit is pushed.

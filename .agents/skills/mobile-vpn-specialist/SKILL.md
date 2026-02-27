@@ -14,7 +14,7 @@ description: Senior-level Kotlin/Android engineering with a focus on WireGuard G
 
 ## Implementation Guidelines
 
-- **Clean UI:** Use Jetpack Compose BOM for consistent dependencies. Implement Material3 Adaptive to support standard phones and foldables (e.g., Pixel 9 Pro Fold).
+- **Clean UI:** Use Jetpack Compose BOM for consistent dependencies. Implement Material3 Adaptive to support standard phones and foldables. Primary test device: **Pixel 10 Pro Fold** (codename `rango`, API 36).
 - **ProGuard/R8:** Always maintain `proguard-rules.pro` when adding new libraries (especially Retrofit/WireGuard) to prevent shrinking-related crashes.
 - **Resource Management:** Implement `NetworkMonitor` to poll statistics only when the tunnel is `UP` to save battery.
 
