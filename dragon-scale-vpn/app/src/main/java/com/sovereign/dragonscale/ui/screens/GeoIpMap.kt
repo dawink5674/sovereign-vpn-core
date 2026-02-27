@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.sp
 import com.sovereign.dragonscale.network.GeoIpClient
 import com.sovereign.dragonscale.network.GeoIpResponse
 import com.sovereign.dragonscale.ui.theme.*
-import kotlinx.coroutines.launch
 import kotlin.math.*
 
 // ===========================================================================
@@ -46,28 +45,31 @@ fun ThreatMapPanel(
     // (fetched before VPN connected, so it's the user's real IP location)
     val userLoc = preVpnUserLoc
     var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
-    val scope = rememberCoroutineScope()
 
-    // Fetch server location only when connected
-    LaunchedEffect(isConnected) {
-        if (isConnected && serverLoc == null) {
-            scope.launch {
-                // Wait for WireGuard to fully establish routes
-                kotlinx.coroutines.delay(1500)
-                var attempts = 0
-                while (serverLoc == null && attempts < 4 && isConnected) {
-                    try {
-                        val loc = GeoIpClient.api.lookup(serverIp)
-                        if (loc.latitude != 0.0) serverLoc = loc
-                    } catch (_: Exception) {}
+    // Reset serverLoc when serverIp changes (prevents showing stale location from different server)
+    LaunchedEffect(serverIp) {
+        serverLoc = null
+    }
 
-                    if (serverLoc == null) {
-                        attempts++
-                        if (attempts < 4) kotlinx.coroutines.delay(2000)
+    // Fetch server location when connected — keyed on BOTH isConnected AND serverIp
+    // so it re-triggers if either changes. Coroutine auto-cancels on key change.
+    LaunchedEffect(isConnected, serverIp) {
+        if (isConnected) {
+            // Wait for WireGuard to fully establish routes
+            kotlinx.coroutines.delay(2500)
+            var attempts = 0
+            while (serverLoc == null && attempts < 4) {
+                try {
+                    val loc = GeoIpClient.api.lookup(serverIp)
+                    if (loc.latitude != 0.0) {
+                        serverLoc = loc
+                        break
                     }
-                }
+                } catch (_: Exception) {}
+                attempts++
+                if (attempts < 4) kotlinx.coroutines.delay(3000)
             }
-        } else if (!isConnected) {
+        } else {
             serverLoc = null // Clear map destination pin when disconnected
         }
     }

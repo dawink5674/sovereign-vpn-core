@@ -71,7 +71,7 @@ object GeoIpClient {
 
     private suspend fun <T> withRetry(
         times: Int = 3,
-        initialDelay: Long = 1000,
+        initialDelay: Long = 3000,
         factor: Double = 2.0,
         block: suspend () -> T
     ): T {
@@ -80,11 +80,22 @@ object GeoIpClient {
             try {
                 return block()
             } catch (e: Exception) {
-                kotlinx.coroutines.delay(currentDelay)
+                // If rate-limited (429/403), wait much longer
+                val delay = if (e is retrofit2.HttpException && e.code() in listOf(429, 403)) {
+                    10_000L // 10s for rate limits
+                } else {
+                    currentDelay
+                }
+                kotlinx.coroutines.delay(delay)
                 currentDelay = (currentDelay * factor).toLong()
             }
         }
         return block() // last attempt
+    }
+
+    /** Public cache clear — call when cache poisoning is suspected. */
+    fun clearCache(context: android.content.Context) {
+        clearCachedLocation(context)
     }
 
     /**
