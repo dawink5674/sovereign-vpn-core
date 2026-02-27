@@ -43,6 +43,24 @@ object GeoIpClient {
         prefs.edit().putString(KEY_CACHED_LOC, com.google.gson.Gson().toJson(response)).apply()
     }
 
+    private fun clearCachedLocation(context: android.content.Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        prefs.edit().remove(KEY_CACHED_LOC).apply()
+    }
+
+    /** Check if any VPN transport is active on the device right now. */
+    private fun isVpnActive(context: android.content.Context): Boolean {
+        return try {
+            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                    as android.net.ConnectivityManager
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { network ->
+                cm.getNetworkCapabilities(network)
+                    ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        } catch (_: Exception) { false }
+    }
+
     val api: GeoIpApi by lazy {
         Retrofit.Builder()
             .baseUrl("https://ipapi.co/")
@@ -70,15 +88,39 @@ object GeoIpClient {
     }
 
     /**
-     * Eagerly fetch and cache the user's real location BEFORE VPN connects.
-     * This is the most reliable strategy: no bypass tricks needed when VPN is off.
-     * Call this as soon as the app starts, before any connect action.
+     * Eagerly fetch and cache the user's real location.
+     *
+     * CRITICAL: This function checks if a VPN is active before making any
+     * network request. If the VPN is already on, the standard API would
+     * return the VPN server's IP — poisoning the cache and causing the
+     * "both pins on the same dot" bug.
+     *
+     * @param serverIp Optional VPN server IP. If provided, the cache is
+     *   validated: if the cached IP matches the server IP, it was poisoned
+     *   by a previous fetch-through-VPN and is cleared.
      */
-    suspend fun fetchAndCacheRealLocation(context: android.content.Context): GeoIpResponse {
+    suspend fun fetchAndCacheRealLocation(
+        context: android.content.Context,
+        serverIp: String? = null
+    ): GeoIpResponse {
+        // 1. Check cache first
         val cached = getCachedLocation(context)
         if (cached != null && !cached.error && cached.latitude != 0.0) {
-            return cached
+            // Validate: if cached IP == VPN server IP, the cache was poisoned
+            if (serverIp != null && cached.ip == serverIp) {
+                clearCachedLocation(context)
+                // Fall through to re-fetch (only if VPN is off)
+            } else {
+                return cached
+            }
         }
+
+        // 2. If VPN is active, DO NOT fetch — the result would be the VPN IP
+        if (isVpnActive(context)) {
+            return GeoIpResponse(error = true)
+        }
+
+        // 3. VPN is off — safe to fetch the user's real IP
         val result = try {
             withRetry { api.lookupSelf() }
         } catch (e: Exception) {
@@ -92,22 +134,26 @@ object GeoIpClient {
 
     /**
      * Look up own IP while bypassing an active VPN tunnel.
-     * Uses ConnectivityManager to find the underlying Wi-Fi/Cellular network,
-     * then binds both socket AND DNS exclusively to it so the request
-     * never touches the VPN tunnel.
      *
      * Strategy:
-     * 1. Return cache if available (set before VPN connected).
+     * 1. Return cache if available and not poisoned.
      * 2. Attempt bypass via non-VPN network with strict DNS binding.
      * 3. If VPN is active and bypass fails, return error (never return VPN IP).
      * 4. If VPN is NOT active, use the standard API and cache.
      */
-    suspend fun lookupSelfBypassVpn(context: android.content.Context): GeoIpResponse {
-        // 1. Try Cache First — this is the primary path when VPN is active.
-        // The cache is populated by fetchAndCacheRealLocation() before VPN starts.
+    suspend fun lookupSelfBypassVpn(
+        context: android.content.Context,
+        serverIp: String? = null
+    ): GeoIpResponse {
+        // 1. Try Cache — this is the primary path when VPN is active.
         val cached = getCachedLocation(context)
         if (cached != null && !cached.error && cached.latitude != 0.0) {
-            return cached
+            // Validate: if cached IP == VPN server IP, it's poisoned
+            if (serverIp != null && cached.ip == serverIp) {
+                clearCachedLocation(context)
+            } else {
+                return cached
+            }
         }
 
         var hasVpn = false
@@ -134,15 +180,11 @@ object GeoIpClient {
             }
 
             if (bypassNetwork != null) {
-                // CRITICAL: DNS must ONLY use the bypass network.
-                // The old code fell back to Dns.SYSTEM on exception, which routed
-                // through the VPN and returned the VPN server's IP, defeating the bypass.
                 val client = okhttp3.OkHttpClient.Builder()
                     .socketFactory(bypassNetwork.socketFactory)
                     .dns(object : okhttp3.Dns {
                         override fun lookup(hostname: String): List<java.net.InetAddress> {
-                            // Strict bypass: only use the underlying Wi-Fi/Cellular network for DNS.
-                            // Do NOT fall back to Dns.SYSTEM — it goes through the VPN tunnel.
+                            // Strict bypass: NEVER fall back to Dns.SYSTEM (goes through VPN)
                             return bypassNetwork.getAllByName(hostname).toList()
                         }
                     })
@@ -171,12 +213,11 @@ object GeoIpClient {
         } catch (_: Exception) {}
 
         if (hasVpn) {
-            // VPN is active, bypass failed, and there is no cache.
-            // DO NOT fall through to the standard API — it would return the VPN IP.
+            // VPN active, bypass failed, no valid cache — return error
             return GeoIpResponse(error = true)
         }
 
-        // No VPN active — safe to use the standard (unrouted) API.
+        // No VPN active — safe to use the standard API
         val fallback = try {
             withRetry { api.lookupSelf() }
         } catch (e: Exception) {

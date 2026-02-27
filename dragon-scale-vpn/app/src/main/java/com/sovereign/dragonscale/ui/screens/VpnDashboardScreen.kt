@@ -85,19 +85,20 @@ fun VpnDashboardScreen(
     // --- Fetch real user location ---
     // Strategy: (1) Eagerly cache real IP before VPN starts (most reliable),
     //           (2) Fall back to bypass lookup if VPN is already active.
+    //           serverIp is passed for cache-poisoning detection (if cached IP == server IP, clear it).
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     LaunchedEffect(Unit) {
         var attempts = 0
         while (preVpnUserLoc == null && attempts < 5) {
             try {
                 // First try the eager (non-bypass) fetch — works perfectly when VPN is off
-                val loc = GeoIpClient.fetchAndCacheRealLocation(context)
+                val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
                 if (!loc.error && loc.latitude != 0.0) {
                     preVpnUserLoc = loc
                     break
                 }
                 // If that returned an error (e.g. VPN already active), try bypass
-                val bypass = GeoIpClient.lookupSelfBypassVpn(context)
+                val bypass = GeoIpClient.lookupSelfBypassVpn(context, serverIp)
                 if (!bypass.error && bypass.latitude != 0.0) {
                     preVpnUserLoc = bypass
                     break
