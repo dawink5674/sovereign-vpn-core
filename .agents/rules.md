@@ -19,6 +19,11 @@
 - **VPN Core:** Any change to `VpnManager.kt` logic (handshakes, key rotation) **MUST** be reviewed against the Mobile & VPN Specialist skill.
 - **SSH Automation:** Any change to `index.js` (control-plane-api) **MUST** be remotely verified by Jules (e.g., verifying 32-byte public key registration).
 
+### Jules Testing & APK Deployment Workflow
+- **Mandatory Wait:** When the user requests Jules for testing, the Antigravity agent MUST wait for Jules to fully complete its test suite and reporting before proceeding.
+- **Compare and Contrast:** The agent MUST pull and review Jules' test results/changes, actively compare them against the local codebase, and merge the best aspects of both tests.
+- **Final Build:** The agent is expressly forbidden from building or pushing a new APK until this comparison and integration is complete to ensure the highest quality build.
+
 ### Firewall Architecture
 
 - `default-allow-ssh` (tcp:22 from `0.0.0.0/0`) — **Required.** Cloud Run SSHes directly to the WireGuard VM for peer auto-apply. Do NOT delete this rule unless a VPC Connector with scoped firewall is deployed first.

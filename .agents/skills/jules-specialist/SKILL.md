@@ -55,7 +55,8 @@ Direct Jules to perform "Red Team" analysis on infrastructure files:
 ### Senior Decision Logic
 
 1. **Discovery (Gemini/Opus):** Architect determines the "Minimal Change" required.
-2. **Execution (Jules):** Orchestrator triggers Jules via `jules remote new` to handle the heavy lifting or high-risk execution.
-3. **Verification (Gemini/Opus):** Orchestrator uses `jules remote pull` to review the work locally against the Minimalist Refactoring Policy.
+2. **Execution (Jules):** Orchestrator triggers Jules via `jules remote new` to handle the heavy lifting or high-risk execution. For testing, orchestrator MUST wait for Jules to fully report results.
+3. **Compare & Contrast (Gemini/Opus):** When Jules completes testing/changes, the orchestrator uses `jules remote pull` to review the work. The orchestrator must actively contrast Jules' approach against the current local code and synthesize the best elements from both sets of tests.
+4. **Verification & Deployment (Gemini/Opus):** Make the final code changes based on the comparison. Only *after* this synthesis is complete should a new APK be compiled and pushed. Do NOT push an APK before reviewing Jules' tasks.
 
-> **Conclusion:** If Jules produces a cleaner, more secure result than a local edit, it is accepted. If Jules suggests a large refactor, the orchestrator must reject it in favor of the original project vision.
+> **Conclusion:** If Jules produces a cleaner, more secure result than a local edit, it is accepted. If Jules suggests a large refactor, the orchestrator must reject it in favor of the original project vision. Always combine the best of both approaches when testing.
