@@ -31,13 +31,13 @@ interface GeoIpApi {
 object GeoIpClient {
     private const val PREFS_NAME = "GeoIpCache"
     private const val KEY_CACHED_LOC = "cached_user_location"
-    
+
     private fun getCachedLocation(context: android.content.Context): GeoIpResponse? {
         val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_CACHED_LOC, null) ?: return null
         return try { com.google.gson.Gson().fromJson(json, GeoIpResponse::class.java) } catch (e: Exception) { null }
     }
-    
+
     private fun saveCachedLocation(context: android.content.Context, response: GeoIpResponse) {
         val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_CACHED_LOC, com.google.gson.Gson().toJson(response)).apply()
@@ -70,13 +70,41 @@ object GeoIpClient {
     }
 
     /**
+     * Eagerly fetch and cache the user's real location BEFORE VPN connects.
+     * This is the most reliable strategy: no bypass tricks needed when VPN is off.
+     * Call this as soon as the app starts, before any connect action.
+     */
+    suspend fun fetchAndCacheRealLocation(context: android.content.Context): GeoIpResponse {
+        val cached = getCachedLocation(context)
+        if (cached != null && !cached.error && cached.latitude != 0.0) {
+            return cached
+        }
+        val result = try {
+            withRetry { api.lookupSelf() }
+        } catch (e: Exception) {
+            GeoIpResponse(error = true)
+        }
+        if (!result.error && result.latitude != 0.0) {
+            saveCachedLocation(context, result)
+        }
+        return result
+    }
+
+    /**
      * Look up own IP while bypassing an active VPN tunnel.
      * Uses ConnectivityManager to find the underlying Wi-Fi/Cellular network,
-     * then binds both socket and DNS to it.
-     * Falls back to the standard [api] if bypass is unavailable.
+     * then binds both socket AND DNS exclusively to it so the request
+     * never touches the VPN tunnel.
+     *
+     * Strategy:
+     * 1. Return cache if available (set before VPN connected).
+     * 2. Attempt bypass via non-VPN network with strict DNS binding.
+     * 3. If VPN is active and bypass fails, return error (never return VPN IP).
+     * 4. If VPN is NOT active, use the standard API and cache.
      */
     suspend fun lookupSelfBypassVpn(context: android.content.Context): GeoIpResponse {
-        // 1. Try Cache First to survive App restarts while VPN is active
+        // 1. Try Cache First — this is the primary path when VPN is active.
+        // The cache is populated by fetchAndCacheRealLocation() before VPN starts.
         val cached = getCachedLocation(context)
         if (cached != null && !cached.error && cached.latitude != 0.0) {
             return cached
@@ -106,15 +134,16 @@ object GeoIpClient {
             }
 
             if (bypassNetwork != null) {
+                // CRITICAL: DNS must ONLY use the bypass network.
+                // The old code fell back to Dns.SYSTEM on exception, which routed
+                // through the VPN and returned the VPN server's IP, defeating the bypass.
                 val client = okhttp3.OkHttpClient.Builder()
                     .socketFactory(bypassNetwork.socketFactory)
                     .dns(object : okhttp3.Dns {
                         override fun lookup(hostname: String): List<java.net.InetAddress> {
-                            return try {
-                                bypassNetwork.getAllByName(hostname).toList()
-                            } catch (_: Exception) {
-                                okhttp3.Dns.SYSTEM.lookup(hostname)
-                            }
+                            // Strict bypass: only use the underlying Wi-Fi/Cellular network for DNS.
+                            // Do NOT fall back to Dns.SYSTEM — it goes through the VPN tunnel.
+                            return bypassNetwork.getAllByName(hostname).toList()
                         }
                     })
                     .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
@@ -141,15 +170,20 @@ object GeoIpClient {
             }
         } catch (_: Exception) {}
 
-        // Fallback: use the standard API (works when VPN is off, but fetches VPN IP if on)
+        if (hasVpn) {
+            // VPN is active, bypass failed, and there is no cache.
+            // DO NOT fall through to the standard API — it would return the VPN IP.
+            return GeoIpResponse(error = true)
+        }
+
+        // No VPN active — safe to use the standard (unrouted) API.
         val fallback = try {
             withRetry { api.lookupSelf() }
         } catch (e: Exception) {
             GeoIpResponse(error = true)
         }
-        
-        // Only cache fallback if VPN is OFF. If VPN is ON, the fallback is the VPN's IP.
-        if (!hasVpn && !fallback.error && fallback.latitude != 0.0) {
+
+        if (!fallback.error && fallback.latitude != 0.0) {
             saveCachedLocation(context, fallback)
         }
         return fallback

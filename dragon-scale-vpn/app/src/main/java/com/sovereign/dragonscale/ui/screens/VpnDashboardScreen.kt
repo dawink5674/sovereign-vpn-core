@@ -82,21 +82,30 @@ fun VpnDashboardScreen(
     // Dynamic server IP from encrypted prefs (replaces hardcoded Iowa IP)
     val serverIp = remember(vpnState) { vpnManager.getServerIp() ?: "35.206.67.49" }
 
-    // --- Fetch real user location bypassing VPN tunnel ---
-    // Uses ConnectivityManager to find Wi-Fi/Cellular and bypass VPN for GeoIP
+    // --- Fetch real user location ---
+    // Strategy: (1) Eagerly cache real IP before VPN starts (most reliable),
+    //           (2) Fall back to bypass lookup if VPN is already active.
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     LaunchedEffect(Unit) {
         var attempts = 0
         while (preVpnUserLoc == null && attempts < 5) {
             try {
-                val loc = GeoIpClient.lookupSelfBypassVpn(context)
-                if (loc.latitude != 0.0) preVpnUserLoc = loc
+                // First try the eager (non-bypass) fetch — works perfectly when VPN is off
+                val loc = GeoIpClient.fetchAndCacheRealLocation(context)
+                if (!loc.error && loc.latitude != 0.0) {
+                    preVpnUserLoc = loc
+                    break
+                }
+                // If that returned an error (e.g. VPN already active), try bypass
+                val bypass = GeoIpClient.lookupSelfBypassVpn(context)
+                if (!bypass.error && bypass.latitude != 0.0) {
+                    preVpnUserLoc = bypass
+                    break
+                }
             } catch (_: Exception) {}
 
-            if (preVpnUserLoc == null) {
-                attempts++
-                if (attempts < 5) kotlinx.coroutines.delay(2000)
-            }
+            attempts++
+            if (attempts < 5) kotlinx.coroutines.delay(2000)
         }
     }
 

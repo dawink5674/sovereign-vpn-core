@@ -89,8 +89,11 @@ class NetworkMonitor private constructor(private val context: Context) {
         var totalTx = 0L
 
         stats.peers().forEach { key ->
-            totalRx += stats.peer(key)?.rxBytes ?: 0
-            totalTx += stats.peer(key)?.txBytes ?: 0
+            // WireGuard GoBackend reports stats from the tunnel's perspective:
+            // peer.rxBytes = bytes the tunnel received FROM us (our upload / TX)
+            // peer.txBytes = bytes the tunnel sent TO us (our download / RX)
+            totalRx += stats.peer(key)?.txBytes ?: 0
+            totalTx += stats.peer(key)?.rxBytes ?: 0
 
             stats.peer(key)?.latestHandshakeEpochMillis?.let { ms ->
                 if (ms > 0) {
