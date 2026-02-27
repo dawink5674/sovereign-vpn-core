@@ -20,26 +20,31 @@ For every user directive, strictly execute this 4-step loop:
 2. Maintain consistency with surrounding code style.
 3. Update the relevant `SKILL.md` if a new project-wide logic pattern was established.
 
-## Step 3: Verification (Jules)
+## Step 3: Verification (Firebase Test Lab)
 
-If the change impacts connectivity, security, or infrastructure:
+If the change impacts connectivity, UI, security, or infrastructure:
 
-1. Spawn a Jules task:
+1. Build the APK:
+// turbo
 ```bash
-jules remote new --repo . --session "[Describe the verification objective]"
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"; .\gradlew assembleDebug
 ```
-2. Monitor status:
+
+2. Run a Firebase robo test:
 ```bash
-jules remote status --session <SESSION_ID>
+gcloud firebase test android run --type=robo \
+  --app=dragon-scale-vpn/app/build/outputs/apk/debug/app-debug.apk \
+  --device model=MediumPhone.arm,version=34 \
+  --timeout=300s
 ```
-3. Iterate on failures until Jules returns a successful report.
+
+3. Review the test results URL provided in the output.
+4. For VPN-specific changes, instruct the user to sideload the APK on their physical device for manual tunnel verification.
 
 ## Step 4: Integration & Cleanup
 
-1. Pull verified changes:
-```bash
-jules remote pull --session <SESSION_ID>
-```
-2. Run local linters.
-3. Verify GCP resource status via `gcloud`.
-4. Provide a **"Minimal Change Summary"** to the user.
+1. Confirm Firebase tests passed (no crashes, ANRs, or UI regressions).
+2. Run local linters and remove unused imports.
+3. Verify GCP resource status via `gcloud` if infrastructure was modified.
+4. Commit and push to GitHub.
+5. Provide a **"Minimal Change Summary"** to the user.

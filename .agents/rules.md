@@ -11,18 +11,19 @@
 | Role | Responsibility |
 |------|---------------|
 | **Gemini / Opus (Architects)** | High-level logic, Kotlin Compose UI design, complex architectural decisions |
-| **Jules (The Hands)** | Code execution, VM-based testing, security scanning, resolving merge conflicts |
+| **Firebase Test Lab (Automated QA)** | Robo tests, instrumentation tests, crash detection, UI validation on virtual devices |
+| **Physical Device (Manual QA)** | VPN tunnel verification, download/upload stats, real-network GeoIP testing |
 
 ## 3. Mandatory Safety Gates
 
-- **Infrastructure:** Any change to `terraform/` or `Dockerfile` **MUST** be verified by a Jules session before integration.
-- **VPN Core:** Any change to `VpnManager.kt` logic (handshakes, key rotation) **MUST** be reviewed against the Mobile & VPN Specialist skill.
-- **SSH Automation:** Any change to `index.js` (control-plane-api) **MUST** be remotely verified by Jules (e.g., verifying 32-byte public key registration).
+- **Infrastructure:** Any change to `terraform/` or `Dockerfile` **MUST** pass a Firebase robo test and GCP resource verification before integration.
+- **VPN Core:** Any change to `VpnManager.kt` logic (handshakes, key rotation) **MUST** be reviewed against the Mobile & VPN Specialist skill and manually tested on a physical device.
+- **SSH Automation:** Any change to `index.js` (control-plane-api) **MUST** be verified via `gcloud` CLI and Cloud Run logs.
 
-### Jules Testing & APK Deployment Workflow
-- **Mandatory Wait:** When the user requests Jules for testing, the Antigravity agent MUST wait for Jules to fully complete its test suite and reporting before proceeding.
-- **Compare and Contrast:** The agent MUST pull and review Jules' test results/changes, actively compare them against the local codebase, and merge the best aspects of both tests.
-- **Final Build:** The agent is expressly forbidden from building or pushing a new APK until this comparison and integration is complete to ensure the highest quality build.
+### Firebase Testing & APK Deployment Workflow
+- **Automated First:** All code changes must pass a Firebase Test Lab robo test before being pushed to GitHub.
+- **Manual Second:** VPN-specific changes (tunnel state, bypass networking, download/upload stats) must be sideloaded and manually verified on a physical device.
+- **Final Build:** The agent is expressly forbidden from pushing a new APK until both automated (Firebase) and manual (physical device) verification confirm no regressions.
 
 ### Firewall Architecture
 
