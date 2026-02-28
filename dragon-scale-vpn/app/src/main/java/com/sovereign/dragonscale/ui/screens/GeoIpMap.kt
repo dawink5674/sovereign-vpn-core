@@ -235,12 +235,28 @@ private fun USMapCanvas(
             val uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
             val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
 
-            drawLightBeam(uPt, sPt, beamT)
-            drawRadar(sPt, radarAngle, StatusConnected)
-            drawUserNode(uPt, DragonCyan, pulseR, pulseA)
-            drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
-            drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
-            drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
+            // Guard: skip all drawing if projected coords contain NaN
+            val pointsValid = !uPt.x.isNaN() && !uPt.y.isNaN() &&
+                              !sPt.x.isNaN() && !sPt.y.isNaN()
+
+            if (pointsValid) {
+                val dist = kotlin.math.hypot(
+                    (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
+                ).toFloat()
+
+                // Only draw the beam arc if points are far enough apart.
+                // Distance < 1f causes division-by-zero in bezier math → NaN → Canvas crash.
+                if (dist > 1f) {
+                    drawLightBeam(uPt, sPt, beamT)
+                }
+
+                // Always draw nodes & labels safely (no division involved)
+                drawRadar(sPt, radarAngle, StatusConnected)
+                drawUserNode(uPt, DragonCyan, pulseR, pulseA)
+                drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
+                drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
+                drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
+            }
         }
     }
 }
