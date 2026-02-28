@@ -61,9 +61,28 @@ object GeoIpClient {
         } catch (_: Exception) { false }
     }
 
+    private const val BROWSER_UA =
+        "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+
+    /** Shared OkHttpClient with browser User-Agent (ipapi.co 403-bans the default okhttp UA). */
+    private val httpClient: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", BROWSER_UA)
+                    .build()
+                chain.proceed(request)
+            }
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
     val api: GeoIpApi by lazy {
         Retrofit.Builder()
             .baseUrl("https://ipapi.co/")
+            .client(httpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(GeoIpApi::class.java)
@@ -195,10 +214,20 @@ object GeoIpClient {
                     .socketFactory(bypassNetwork.socketFactory)
                     .dns(object : okhttp3.Dns {
                         override fun lookup(hostname: String): List<java.net.InetAddress> {
-                            // Strict bypass: NEVER fall back to Dns.SYSTEM (goes through VPN)
-                            return bypassNetwork.getAllByName(hostname).toList()
+                            return try {
+                                bypassNetwork.getAllByName(hostname).toList()
+                            } catch (e: Exception) {
+                                // Physical network DNS failed — fall back to system DNS
+                                okhttp3.Dns.SYSTEM.lookup(hostname)
+                            }
                         }
                     })
+                    .addInterceptor { chain ->
+                        val request = chain.request().newBuilder()
+                            .header("User-Agent", BROWSER_UA)
+                            .build()
+                        chain.proceed(request)
+                    }
                     .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                     .build()

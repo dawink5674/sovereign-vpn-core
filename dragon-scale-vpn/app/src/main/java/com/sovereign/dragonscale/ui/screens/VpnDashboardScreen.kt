@@ -86,11 +86,12 @@ fun VpnDashboardScreen(
     // Strategy: (1) Eagerly cache real IP before VPN starts (most reliable),
     //           (2) Fall back to bypass lookup if VPN is already active.
     //           serverIp is passed for cache-poisoning detection (if cached IP == server IP, clear it).
-    //           Re-triggers on vpnState change so a failed initial fetch gets retried.
+    //           Keyed on isConnected boolean (not vpnState object) to avoid recomposition cancellation.
+    val isConnected = vpnState == Tunnel.State.UP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
-    LaunchedEffect(vpnState) {
+    LaunchedEffect(isConnected) {
         // On disconnect, clear cache so next connect cycle gets a fresh location
-        if (vpnState == Tunnel.State.DOWN) {
+        if (!isConnected) {
             GeoIpClient.clearCache(context)
         }
         // Skip re-fetch if we already have a valid location
