@@ -234,44 +234,43 @@ private fun USMapCanvas(
 
         // Show user location pin always (even when disconnected)
         if (userGeo != null) {
-            val uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
-            if (!uPt.x.isNaN() && !uPt.y.isNaN()) {
-                drawUserNode(uPt, DragonCyan, pulseR, pulseA)
-                drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
-            }
-        }
-
-        // Show server pin + beam only when connected with both locations
-        if (isConnected && userGeo != null && serverGeo != null) {
             var uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
-            val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
+            if (!uPt.x.isNaN() && !uPt.y.isNaN()) {
+                // Show server pin + beam only when connected with both locations
+                if (isConnected && serverGeo != null) {
+                    val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
 
-            // Guard: skip all drawing if projected coords contain NaN
-            val pointsValid = !uPt.x.isNaN() && !uPt.y.isNaN() &&
-                              !sPt.x.isNaN() && !sPt.y.isNaN()
+                    // Guard: skip all drawing if projected coords contain NaN
+                    val pointsValid = !sPt.x.isNaN() && !sPt.y.isNaN()
 
-            if (pointsValid) {
-                val dist = kotlin.math.hypot(
-                    (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
-                ).toFloat()
+                    if (pointsValid) {
+                        var dist = kotlin.math.hypot(
+                            (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
+                        ).toFloat()
 
-                // Offset user pin if too close to server pin (prevents visual overlap)
-                if (dist < 30f && dist >= 0f) {
-                    uPt = Offset(uPt.x - 40f, uPt.y + 25f)
+                        // Offset user pin if too close to server pin (prevents visual overlap)
+                        if (dist < 30f && dist >= 0f) {
+                            uPt = Offset(uPt.x - 40f, uPt.y + 25f)
+                            dist = kotlin.math.hypot(
+                                (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
+                            ).toFloat()
+                        }
+
+                        // Only draw the beam arc if points are far enough apart.
+                        // Distance < 1f causes division-by-zero in bezier math → NaN → Canvas crash.
+                        if (dist > 1f) {
+                            drawLightBeam(uPt, sPt, beamT)
+                        }
+
+                        // Always draw nodes & labels safely (no division involved)
+                        drawRadar(sPt, radarAngle, StatusConnected)
+                        drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
+                        drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
+                    }
                 }
 
-                // Only draw the beam arc if points are far enough apart.
-                // Distance < 1f causes division-by-zero in bezier math → NaN → Canvas crash.
-                if (dist > 1f) {
-                    drawLightBeam(uPt, sPt, beamT)
-                }
-
-                // Always draw nodes & labels safely (no division involved)
-                drawRadar(sPt, radarAngle, StatusConnected)
                 drawUserNode(uPt, DragonCyan, pulseR, pulseA)
-                drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
                 drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
-                drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
             }
         }
     }
