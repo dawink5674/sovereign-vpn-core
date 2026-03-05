@@ -6,7 +6,7 @@ import retrofit2.http.GET
 import retrofit2.http.Path
 
 /**
- * Geo-IP lookup via ip-api.com (free, no key required).
+ * Geo-IP lookup via ipapi.co (primary) + ip-api.com (fallback).
  * Used for the SOC-style threat map.
  */
 data class GeoIpResponse(
@@ -20,12 +20,48 @@ data class GeoIpResponse(
     val error: Boolean = false
 )
 
+/**
+ * ip-api.com response model — different field names from ipapi.co.
+ * Free tier, no key required, separate rate-limit pool.
+ */
+data class IpApiResponse(
+    val query: String = "",
+    val status: String = "",
+    val country: String = "",
+    val regionName: String = "",
+    val city: String = "",
+    val lat: Double = 0.0,
+    val lon: Double = 0.0,
+    val org: String = ""
+)
+
+/** Map ip-api.com response to the unified GeoIpResponse. */
+fun IpApiResponse.toGeoIpResponse(): GeoIpResponse = GeoIpResponse(
+    ip = query,
+    country_name = country,
+    region = regionName,
+    city = city,
+    latitude = lat,
+    longitude = lon,
+    org = org,
+    error = status != "success"
+)
+
 interface GeoIpApi {
     @GET("{ip}/json/")
     suspend fun lookup(@Path("ip") ip: String): GeoIpResponse
 
     @GET("json/")
     suspend fun lookupSelf(): GeoIpResponse
+}
+
+/** Fallback API interface for ip-api.com */
+interface IpApiFallbackApi {
+    @GET("json/{ip}")
+    suspend fun lookup(@Path("ip") ip: String): IpApiResponse
+
+    @GET("json/")
+    suspend fun lookupSelf(): IpApiResponse
 }
 
 object GeoIpClient {
@@ -88,6 +124,16 @@ object GeoIpClient {
             .create(GeoIpApi::class.java)
     }
 
+    /** Fallback API — ip-api.com (free, no key, different rate-limit pool). */
+    val fallbackApi: IpApiFallbackApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("http://ip-api.com/")
+            .client(httpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(IpApiFallbackApi::class.java)
+    }
+
     private suspend fun <T> withRetry(
         times: Int = 3,
         initialDelay: Long = 3000,
@@ -112,9 +158,58 @@ object GeoIpClient {
         return block() // last attempt
     }
 
+    /**
+     * Check if cached location data was poisoned by the VPN.
+     * Detects poisoning via IP string match. Coordinate proximity
+     * can be added in future if server coords are known at check time.
+     */
+    fun isLocationPoisoned(cached: GeoIpResponse, serverIp: String?): Boolean {
+        if (serverIp == null) return false
+        if (cached.ip == serverIp) return true
+        return false
+    }
+
     /** Public cache clear — call when cache poisoning is suspected. */
     fun clearCache(context: android.content.Context) {
         clearCachedLocation(context)
+    }
+
+    // -----------------------------------------------------------------
+    // Fallback-aware lookup methods
+    // -----------------------------------------------------------------
+
+    /**
+     * Look up a specific IP with fallback: try ipapi.co first, then ip-api.com.
+     */
+    suspend fun lookupWithFallback(ip: String): GeoIpResponse {
+        return try {
+            val primary = withRetry { api.lookup(ip) }
+            if (!primary.error && primary.latitude != 0.0) primary
+            else withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
+        } catch (_: Exception) {
+            try {
+                withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
+            } catch (_: Exception) {
+                GeoIpResponse(error = true)
+            }
+        }
+    }
+
+    /**
+     * Look up own IP with fallback: try ipapi.co first, then ip-api.com.
+     */
+    private suspend fun lookupSelfWithFallback(): GeoIpResponse {
+        return try {
+            val primary = withRetry { api.lookupSelf() }
+            if (!primary.error && primary.latitude != 0.0) primary
+            else withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
+        } catch (_: Exception) {
+            try {
+                withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
+            } catch (_: Exception) {
+                GeoIpResponse(error = true)
+            }
+        }
     }
 
     /**
@@ -137,7 +232,7 @@ object GeoIpClient {
         val cached = getCachedLocation(context)
         if (cached != null && !cached.error && cached.latitude != 0.0) {
             // Validate: if cached IP == VPN server IP, the cache was poisoned
-            if (serverIp != null && cached.ip == serverIp) {
+            if (isLocationPoisoned(cached, serverIp)) {
                 clearCachedLocation(context)
                 // Fall through to re-fetch (only if VPN is off)
             } else {
@@ -150,9 +245,9 @@ object GeoIpClient {
             return GeoIpResponse(error = true)
         }
 
-        // 3. VPN is off — safe to fetch the user's real IP
+        // 3. VPN is off — safe to fetch the user's real IP (with fallback)
         val result = try {
-            withRetry { api.lookupSelf() }
+            lookupSelfWithFallback()
         } catch (e: Exception) {
             GeoIpResponse(error = true)
         }
@@ -179,7 +274,7 @@ object GeoIpClient {
         val cached = getCachedLocation(context)
         if (cached != null && !cached.error && cached.latitude != 0.0) {
             // Validate: if cached IP == VPN server IP, it's poisoned
-            if (serverIp != null && cached.ip == serverIp) {
+            if (isLocationPoisoned(cached, serverIp)) {
                 clearCachedLocation(context)
             } else {
                 return cached
@@ -232,6 +327,7 @@ object GeoIpClient {
                     .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
 
+                // Primary bypass API (ipapi.co)
                 val bypassApi = Retrofit.Builder()
                     .baseUrl("https://ipapi.co/")
                     .client(client)
@@ -239,10 +335,24 @@ object GeoIpClient {
                     .build()
                     .create(GeoIpApi::class.java)
 
+                // Fallback bypass API (ip-api.com)
+                val bypassFallbackApi = Retrofit.Builder()
+                    .baseUrl("http://ip-api.com/")
+                    .client(client)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(IpApiFallbackApi::class.java)
+
                 val r = try {
-                    withRetry { bypassApi.lookupSelf() }
-                } catch (e: Exception) {
-                    GeoIpResponse(error = true)
+                    val primary = withRetry { bypassApi.lookupSelf() }
+                    if (!primary.error && primary.latitude != 0.0) primary
+                    else withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                } catch (_: Exception) {
+                    try {
+                        withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                    } catch (_: Exception) {
+                        GeoIpResponse(error = true)
+                    }
                 }
 
                 if (!r.error && r.latitude != 0.0) {
@@ -257,9 +367,9 @@ object GeoIpClient {
             return GeoIpResponse(error = true)
         }
 
-        // No VPN active — safe to use the standard API
+        // No VPN active — safe to use the standard API (with fallback)
         val fallback = try {
-            withRetry { api.lookupSelf() }
+            lookupSelfWithFallback()
         } catch (e: Exception) {
             GeoIpResponse(error = true)
         }

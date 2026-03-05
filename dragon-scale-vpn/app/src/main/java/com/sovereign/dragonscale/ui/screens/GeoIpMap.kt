@@ -60,7 +60,7 @@ fun ThreatMapPanel(
             var attempts = 0
             while (serverLoc == null && attempts < 4) {
                 try {
-                    val loc = GeoIpClient.api.lookup(serverIp)
+                    val loc = GeoIpClient.lookupWithFallback(serverIp)
                     if (loc.latitude != 0.0) {
                         serverLoc = loc
                         break
@@ -119,7 +119,8 @@ fun ThreatMapPanel(
                         ), color = TextMuted)
                     }
                 }
-                if (!isConnected) {
+                // Show AWAITING only when disconnected AND no user pin visible
+                if (!isConnected && userLoc == null) {
                     Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("AWAITING CONNECTION", style = MaterialTheme.typography.labelMedium.copy(
                             letterSpacing = 3.sp), color = TextMuted)
@@ -231,8 +232,18 @@ private fun USMapCanvas(
         drawMajorCities(mv, measurer)
         drawVerticalScanLine(w, h, scanX)
 
-        if (isConnected && userGeo != null && serverGeo != null) {
+        // Show user location pin always (even when disconnected)
+        if (userGeo != null) {
             val uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
+            if (!uPt.x.isNaN() && !uPt.y.isNaN()) {
+                drawUserNode(uPt, DragonCyan, pulseR, pulseA)
+                drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
+            }
+        }
+
+        // Show server pin + beam only when connected with both locations
+        if (isConnected && userGeo != null && serverGeo != null) {
+            var uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
             val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
 
             // Guard: skip all drawing if projected coords contain NaN
@@ -243,6 +254,11 @@ private fun USMapCanvas(
                 val dist = kotlin.math.hypot(
                     (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
                 ).toFloat()
+
+                // Offset user pin if too close to server pin (prevents visual overlap)
+                if (dist < 30f && dist >= 0f) {
+                    uPt = Offset(uPt.x - 40f, uPt.y + 25f)
+                }
 
                 // Only draw the beam arc if points are far enough apart.
                 // Distance < 1f causes division-by-zero in bezier math → NaN → Canvas crash.

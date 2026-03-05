@@ -90,15 +90,17 @@ fun VpnDashboardScreen(
     val isConnected = vpnState == Tunnel.State.UP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     LaunchedEffect(isConnected) {
-        // On disconnect, clear cache so next connect cycle gets a fresh location
+        // On disconnect, clear cache and reset state so next connect cycle re-fetches
         if (!isConnected) {
             GeoIpClient.clearCache(context)
+            preVpnUserLoc = null
+            return@LaunchedEffect
         }
-        // Skip re-fetch if we already have a valid location
+        // Skip re-fetch if we already have a valid location for THIS session
         if (preVpnUserLoc != null) return@LaunchedEffect
 
         var attempts = 0
-        while (preVpnUserLoc == null && attempts < 5) {
+        while (preVpnUserLoc == null && attempts < 7) {
             try {
                 // First try the eager (non-bypass) fetch — works perfectly when VPN is off
                 val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
@@ -115,7 +117,7 @@ fun VpnDashboardScreen(
             } catch (_: Exception) {}
 
             attempts++
-            if (attempts < 5) kotlinx.coroutines.delay(3000)
+            if (attempts < 7) kotlinx.coroutines.delay(3000)
         }
     }
 
