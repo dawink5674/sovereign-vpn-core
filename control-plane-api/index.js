@@ -85,6 +85,13 @@ function sshExec(command, stdinData = null) {
 }
 
 // ---------------------------------------------------------------------------
+// Validate WireGuard Base64 Public Key
+// ---------------------------------------------------------------------------
+function isValidPublicKey(key) {
+  return /^[A-Za-z0-9+/]{43}=$/.test(key);
+}
+
+// ---------------------------------------------------------------------------
 // Apply a peer to the live WireGuard interface via SSH
 // Uses `wg set` which adds the peer without restarting the interface
 // ---------------------------------------------------------------------------
@@ -95,7 +102,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
     const pskFile = `/tmp/psk_${Date.now()}`;
     const commands = [
       `echo '${presharedKey}' > ${pskFile}`,
-      `sudo wg set ${WG_INTERFACE} peer ${publicKey} preshared-key ${pskFile} allowed-ips ${assignedIP}`,
+      `sudo wg set ${WG_INTERFACE} peer '${publicKey}' preshared-key ${pskFile} allowed-ips ${assignedIP}`,
       `rm -f ${pskFile}`,
     ].join(' && ');
 
@@ -120,7 +127,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -164,8 +171,7 @@ app.post('/api/peers', async (req, res) => {
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
-    const keyBuffer = Buffer.from(publicKey, 'base64');
-    if (keyBuffer.length !== 32) {
+    if (!isValidPublicKey(publicKey)) {
       return res.status(400).json({
         error: 'Invalid public key: must be 32 bytes (Curve25519)',
       });
@@ -242,6 +248,10 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
+  if (!isValidPublicKey(decoded)) {
+    return res.status(400).json({ error: 'Invalid public key format' });
+  }
+
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
   }
@@ -263,8 +273,12 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Control Plane API listening on port ${PORT}`);
-  console.log(`Zero-Trust mode: clients generate their own keys`);
-  console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Control Plane API listening on port ${PORT}`);
+    console.log(`Zero-Trust mode: clients generate their own keys`);
+    console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
+  });
+}
+
+module.exports = { app, peers };
