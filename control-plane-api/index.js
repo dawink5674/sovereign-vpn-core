@@ -25,6 +25,30 @@ const peers = new Map();
 let nextIP = 2; // .1 is the server
 
 // ---------------------------------------------------------------------------
+// Admin Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAdminAuth(req, res, next) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY is missing' });
+  }
+
+  const apiKey = req.header('X-API-Key');
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  const expectedKey = Buffer.from(adminApiKey);
+  const providedKey = Buffer.from(apiKey);
+
+  if (expectedKey.length !== providedKey.length || !crypto.timingSafeEqual(expectedKey, providedKey)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+
+  next();
+}
+
+// ---------------------------------------------------------------------------
 // SSH helper — execute a command on the WireGuard server
 // ---------------------------------------------------------------------------
 function sshExec(command, stdinData = null) {
@@ -151,7 +175,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAdminAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -163,7 +187,15 @@ app.post('/api/peers', async (req, res) => {
       return res.status(400).json({ error: 'Client public key (base64) is required' });
     }
 
-    // Validate base64 key is 44 chars (32 bytes base64-encoded)
+    // Strict base64 validation (must be 43 base64 chars + 1 padding equals = 44 chars total)
+    // Prevents injection vulnerabilities before buffer conversion
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      return res.status(400).json({
+        error: 'Invalid public key: must be a strictly formatted 44-character base64 string',
+      });
+    }
+
+    // Validate base64 key is 32 bytes (Curve25519)
     const keyBuffer = Buffer.from(publicKey, 'base64');
     if (keyBuffer.length !== 32) {
       return res.status(400).json({
@@ -224,7 +256,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAdminAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +270,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAdminAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
