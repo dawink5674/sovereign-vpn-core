@@ -95,7 +95,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
     const pskFile = `/tmp/psk_${Date.now()}`;
     const commands = [
       `echo '${presharedKey}' > ${pskFile}`,
-      `sudo wg set ${WG_INTERFACE} peer ${publicKey} preshared-key ${pskFile} allowed-ips ${assignedIP}`,
+      `sudo wg set ${WG_INTERFACE} peer '${publicKey}' preshared-key ${pskFile} allowed-ips ${assignedIP}`,
       `rm -f ${pskFile}`,
     ].join(' && ');
 
@@ -120,7 +120,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -128,6 +128,35 @@ async function removePeerFromServer(publicKey) {
     return { success: false, error: err.message };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Authentication Middleware
+// ---------------------------------------------------------------------------
+function authMiddleware(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY is missing' });
+  }
+
+  const providedKey = req.headers['x-api-key'];
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Missing X-API-Key header' });
+  }
+
+  const expectedKeyBuffer = Buffer.from(adminKey);
+  const providedKeyBuffer = Buffer.from(providedKey);
+
+  if (
+    expectedKeyBuffer.length !== providedKeyBuffer.length ||
+    !crypto.timingSafeEqual(expectedKeyBuffer, providedKeyBuffer)
+  ) {
+    return res.status(401).json({ error: 'Invalid API Key' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', authMiddleware);
 
 // ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
@@ -161,6 +190,13 @@ app.post('/api/peers', async (req, res) => {
 
     if (!publicKey || typeof publicKey !== 'string') {
       return res.status(400).json({ error: 'Client public key (base64) is required' });
+    }
+
+    // Strict regex validation for base64 WireGuard public key to prevent command injection
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      return res.status(400).json({
+        error: 'Invalid public key format: must be a valid base64 string',
+      });
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
@@ -225,12 +261,11 @@ app.post('/api/peers', async (req, res) => {
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
 app.get('/api/peers', (_req, res) => {
-  const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
-    name,
-    publicKey,
-    assignedIP,
-    createdAt,
-  }));
+  const peerList = new Array(peers.size);
+  let i = 0;
+  for (const { name, publicKey, assignedIP, createdAt } of peers.values()) {
+    peerList[i++] = { name, publicKey, assignedIP, createdAt };
+  }
 
   res.status(200).json({ count: peerList.length, peers: peerList });
 });
@@ -241,6 +276,13 @@ app.get('/api/peers', (_req, res) => {
 app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
+
+  // Strict regex validation for base64 WireGuard public key to prevent command injection
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(decoded)) {
+    return res.status(400).json({
+      error: 'Invalid public key format: must be a valid base64 string',
+    });
+  }
 
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
