@@ -120,7 +120,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -161,6 +161,13 @@ app.post('/api/peers', async (req, res) => {
 
     if (!publicKey || typeof publicKey !== 'string') {
       return res.status(400).json({ error: 'Client public key (base64) is required' });
+    }
+
+    // Strict validation of base64 WireGuard public key (44 chars) to prevent command injection
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      return res.status(400).json({
+        error: 'Invalid public key format: must be exactly 32 bytes (base64-encoded)',
+      });
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
@@ -241,6 +248,13 @@ app.get('/api/peers', (_req, res) => {
 app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
+
+  // Strict validation of base64 WireGuard public key to prevent command injection
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(decoded)) {
+    return res.status(400).json({
+      error: 'Invalid public key format',
+    });
+  }
 
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
