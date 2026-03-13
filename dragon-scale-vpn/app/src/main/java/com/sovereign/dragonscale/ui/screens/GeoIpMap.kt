@@ -58,7 +58,7 @@ fun ThreatMapPanel(
             // Wait for WireGuard to fully establish routes
             kotlinx.coroutines.delay(2500)
             var attempts = 0
-            while (serverLoc == null && attempts < 4) {
+            while (serverLoc == null && attempts < 6) {
                 try {
                     val loc = GeoIpClient.lookupWithFallback(serverIp)
                     if (loc.latitude != 0.0) {
@@ -67,7 +67,7 @@ fun ThreatMapPanel(
                     }
                 } catch (_: Exception) {}
                 attempts++
-                if (attempts < 4) kotlinx.coroutines.delay(3000)
+                if (attempts < 6) kotlinx.coroutines.delay(3000)
             }
         } else {
             serverLoc = null // Clear map destination pin when disconnected
@@ -190,10 +190,65 @@ private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView 
 private fun projectMV(lat: Double, lon: Double, mv: MapView): Offset {
     val x = mv.offsetX + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * mv.mapW).toFloat()
     val y = mv.offsetY + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * mv.mapH).toFloat()
+    return Offset(x, y) // Don't clamp — caller handles out-of-bounds
+}
+
+/** Check if a projected point is within the visible map area (with margin). */
+private fun isInMapBounds(pt: Offset, mv: MapView, margin: Float = 20f): Boolean {
+    return pt.x >= mv.offsetX - margin && pt.x <= mv.offsetX + mv.mapW + margin &&
+           pt.y >= mv.offsetY - margin && pt.y <= mv.offsetY + mv.mapH + margin
+}
+
+/** Clamp a point to the map edge (for drawing off-map indicators). */
+private fun clampToMapEdge(pt: Offset, mv: MapView, inset: Float = 12f): Offset {
     return Offset(
-        x.coerceIn(mv.offsetX, mv.offsetX + mv.mapW),
-        y.coerceIn(mv.offsetY, mv.offsetY + mv.mapH)
+        pt.x.coerceIn(mv.offsetX + inset, mv.offsetX + mv.mapW - inset),
+        pt.y.coerceIn(mv.offsetY + inset, mv.offsetY + mv.mapH - inset)
     )
+}
+
+/** Draw an arrow at the map edge pointing toward an off-screen location. */
+private fun DrawScope.drawOffMapArrow(
+    edgePt: Offset, realPt: Offset, color: Color, measurer: androidx.compose.ui.text.TextMeasurer
+) {
+    val dx = realPt.x - edgePt.x
+    val dy = realPt.y - edgePt.y
+    val angle = atan2(dy, dx)
+
+    // Pulsing chevron arrow pointing outward
+    val arrowLen = 10f
+    val arrowSpread = 0.5f // radians
+    val tip = edgePt
+    val left = Offset(
+        tip.x - arrowLen * cos(angle - arrowSpread),
+        tip.y - arrowLen * sin(angle - arrowSpread)
+    )
+    val right = Offset(
+        tip.x - arrowLen * cos(angle + arrowSpread),
+        tip.y - arrowLen * sin(angle + arrowSpread)
+    )
+    val arrowPath = Path().apply {
+        moveTo(tip.x, tip.y)
+        lineTo(left.x, left.y)
+        moveTo(tip.x, tip.y)
+        lineTo(right.x, right.y)
+    }
+    drawPath(arrowPath, color.copy(alpha = 0.8f), style = Stroke(2f, cap = StrokeCap.Round))
+
+    // Small "OFF-MAP" label
+    val label = "OFF-MAP"
+    val style = TextStyle(
+        color = color.copy(alpha = 0.5f),
+        fontSize = 6.sp,
+        fontFamily = FontFamily.Monospace
+    )
+    val result = measurer.measure(label, style)
+    // Position label on the inward side of the arrow
+    val labelOffset = Offset(
+        edgePt.x - arrowLen * cos(angle) * 2.5f - result.size.width / 2f,
+        edgePt.y - arrowLen * sin(angle) * 2.5f - result.size.height / 2f
+    )
+    drawText(result, topLeft = labelOffset)
 }
 
 @Composable
@@ -234,23 +289,35 @@ private fun USMapCanvas(
 
         // Show user location pin always (even when disconnected)
         if (userGeo != null) {
-            val uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
-            if (!uPt.x.isNaN() && !uPt.y.isNaN()) {
-                drawUserNode(uPt, DragonCyan, pulseR, pulseA)
-                drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
+            val uPtRaw = projectMV(userGeo.latitude, userGeo.longitude, mv)
+            if (!uPtRaw.x.isNaN() && !uPtRaw.y.isNaN()) {
+                val uInBounds = isInMapBounds(uPtRaw, mv)
+                val uPt = if (uInBounds) uPtRaw else clampToMapEdge(uPtRaw, mv)
+                if (uInBounds) {
+                    drawUserNode(uPt, DragonCyan, pulseR, pulseA)
+                    drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
+                } else {
+                    drawOffMapArrow(uPt, uPtRaw, DragonCyan, measurer)
+                    drawUserNode(uPt, DragonCyan.copy(alpha = 0.5f), pulseR * 0.6f, pulseA)
+                }
             }
         }
 
         // Show server pin + beam only when connected with both locations
         if (isConnected && userGeo != null && serverGeo != null) {
-            var uPt = projectMV(userGeo.latitude, userGeo.longitude, mv)
-            val sPt = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
+            val uPtRaw = projectMV(userGeo.latitude, userGeo.longitude, mv)
+            val sPtRaw = projectMV(serverGeo.latitude, serverGeo.longitude, mv)
 
             // Guard: skip all drawing if projected coords contain NaN
-            val pointsValid = !uPt.x.isNaN() && !uPt.y.isNaN() &&
-                              !sPt.x.isNaN() && !sPt.y.isNaN()
+            val pointsValid = !uPtRaw.x.isNaN() && !uPtRaw.y.isNaN() &&
+                              !sPtRaw.x.isNaN() && !sPtRaw.y.isNaN()
 
             if (pointsValid) {
+                val uInBounds = isInMapBounds(uPtRaw, mv)
+                val sInBounds = isInMapBounds(sPtRaw, mv)
+                var uPt = if (uInBounds) uPtRaw else clampToMapEdge(uPtRaw, mv)
+                val sPt = if (sInBounds) sPtRaw else clampToMapEdge(sPtRaw, mv)
+
                 val dist = kotlin.math.hypot(
                     (sPt.x - uPt.x).toDouble(), (sPt.y - uPt.y).toDouble()
                 ).toFloat()
@@ -266,10 +333,22 @@ private fun USMapCanvas(
                     drawLightBeam(uPt, sPt, beamT)
                 }
 
+                // Draw off-map arrows for out-of-bounds points
+                if (!uInBounds) {
+                    drawOffMapArrow(uPt, uPtRaw, DragonCyan, measurer)
+                }
+                if (!sInBounds) {
+                    drawOffMapArrow(sPt, sPtRaw, StatusConnected, measurer)
+                }
+
                 // Always draw nodes & labels safely (no division involved)
-                drawRadar(sPt, radarAngle, StatusConnected)
-                drawUserNode(uPt, DragonCyan, pulseR, pulseA)
-                drawServerNode(sPt, StatusConnected, pulseR * 0.7f, pulseA)
+                if (sInBounds) {
+                    drawRadar(sPt, radarAngle, StatusConnected)
+                }
+                drawUserNode(uPt, if (uInBounds) DragonCyan else DragonCyan.copy(alpha = 0.5f),
+                    if (uInBounds) pulseR else pulseR * 0.6f, pulseA)
+                drawServerNode(sPt, if (sInBounds) StatusConnected else StatusConnected.copy(alpha = 0.5f),
+                    pulseR * 0.7f, pulseA)
                 drawCoordLabels(uPt, userGeo, measurer, DragonCyan)
                 drawCoordLabels(sPt, serverGeo, measurer, StatusConnected)
             }
