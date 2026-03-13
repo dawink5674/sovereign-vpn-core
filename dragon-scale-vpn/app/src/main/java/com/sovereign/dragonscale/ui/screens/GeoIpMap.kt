@@ -58,7 +58,7 @@ fun ThreatMapPanel(
             // Wait for WireGuard to fully establish routes
             kotlinx.coroutines.delay(2500)
             var attempts = 0
-            while (serverLoc == null && attempts < 4) {
+            while (serverLoc == null && attempts < 6) {
                 try {
                     val loc = GeoIpClient.lookupWithFallback(serverIp)
                     if (loc.latitude != 0.0) {
@@ -67,7 +67,7 @@ fun ThreatMapPanel(
                     }
                 } catch (_: Exception) {}
                 attempts++
-                if (attempts < 4) kotlinx.coroutines.delay(3000)
+                if (attempts < 6) kotlinx.coroutines.delay(3000)
             }
         } else {
             serverLoc = null // Clear map destination pin when disconnected
