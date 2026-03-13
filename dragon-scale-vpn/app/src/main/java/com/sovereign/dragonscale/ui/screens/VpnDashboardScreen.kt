@@ -89,11 +89,40 @@ fun VpnDashboardScreen(
     //           Keyed on isConnected boolean (not vpnState object) to avoid recomposition cancellation.
     val isConnected = vpnState == Tunnel.State.UP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
+
+    // EAGER FETCH: Get user's real location immediately on screen load (before VPN connects)
+    // This is the most reliable path — VPN is guaranteed to be off at first composition
+    LaunchedEffect(Unit) {
+        if (preVpnUserLoc == null) {
+            var attempts = 0
+            while (preVpnUserLoc == null && attempts < 5) {
+                try {
+                    val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
+                    if (!loc.error && loc.latitude != 0.0) {
+                        preVpnUserLoc = loc
+                        break
+                    }
+                } catch (_: Exception) {}
+                attempts++
+                if (attempts < 5) kotlinx.coroutines.delay(2000)
+            }
+        }
+    }
+
     LaunchedEffect(isConnected) {
-        // On disconnect, clear cache and reset state so next connect cycle re-fetches
+        // On disconnect, clear stale cache and re-fetch real location (VPN is now off)
         if (!isConnected) {
             GeoIpClient.clearCache(context)
-            preVpnUserLoc = null
+            // Re-fetch immediately — VPN is off so this will get the real IP
+            try {
+                kotlinx.coroutines.delay(1000) // Brief delay for VPN teardown
+                val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
+                if (!loc.error && loc.latitude != 0.0) {
+                    preVpnUserLoc = loc
+                }
+            } catch (_: Exception) {
+                preVpnUserLoc = null
+            }
             return@LaunchedEffect
         }
         // Skip re-fetch if we already have a valid location for THIS session
