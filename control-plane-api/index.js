@@ -143,6 +143,33 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Require Admin Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAdminAuth(req, res, next) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY not set' });
+  }
+
+  const apiKeyHeader = req.header('X-API-Key');
+  if (!apiKeyHeader || typeof apiKeyHeader !== 'string') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const expectedKey = Buffer.from(adminApiKey);
+  const providedKey = Buffer.from(apiKeyHeader);
+
+  if (expectedKey.length !== providedKey.length || !crypto.timingSafeEqual(expectedKey, providedKey)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', requireAdminAuth);
+
+// ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
 // The client generates its own keypair locally and sends ONLY the public key.
