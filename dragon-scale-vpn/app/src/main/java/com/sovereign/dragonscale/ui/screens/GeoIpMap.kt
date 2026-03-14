@@ -55,19 +55,32 @@ fun ThreatMapPanel(
     // so it re-triggers if either changes. Coroutine auto-cancels on key change.
     LaunchedEffect(isConnected, serverIp) {
         if (isConnected) {
-            // Wait for WireGuard to fully establish routes
-            kotlinx.coroutines.delay(2500)
+            // Try known server lookup immediately (no network delay needed)
+            // — lookupWithFallback checks the known-server table first.
+            // Only wait for WireGuard routes if we need a network GeoIP call.
             var attempts = 0
-            while (serverLoc == null && attempts < 6) {
-                try {
-                    val loc = GeoIpClient.lookupWithFallback(serverIp)
-                    if (loc.latitude != 0.0) {
-                        serverLoc = loc
-                        break
-                    }
-                } catch (_: Exception) {}
-                attempts++
-                if (attempts < 6) kotlinx.coroutines.delay(3000)
+            // First attempt: instant (known-server table returns immediately)
+            try {
+                val loc = GeoIpClient.lookupWithFallback(serverIp)
+                if (loc.latitude != 0.0 && !loc.error) {
+                    serverLoc = loc
+                }
+            } catch (_: Exception) {}
+
+            // If known-server didn't match, wait for routes then retry with GeoIP APIs
+            if (serverLoc == null) {
+                kotlinx.coroutines.delay(1500)
+                while (serverLoc == null && attempts < 8) {
+                    try {
+                        val loc = GeoIpClient.lookupWithFallback(serverIp)
+                        if (loc.latitude != 0.0 && !loc.error) {
+                            serverLoc = loc
+                            break
+                        }
+                    } catch (_: Exception) {}
+                    attempts++
+                    if (attempts < 8) kotlinx.coroutines.delay(2500)
+                }
             }
         } else {
             serverLoc = null // Clear map destination pin when disconnected

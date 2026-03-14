@@ -64,24 +64,77 @@ interface IpApiFallbackApi {
     suspend fun lookupSelf(): IpApiResponse
 }
 
+/** Third fallback API interface for ipwho.is */
+interface IpWhoIsApi {
+    @GET("{ip}")
+    suspend fun lookup(@Path("ip") ip: String): IpWhoIsResponse
+
+    @GET("/")
+    suspend fun lookupSelf(): IpWhoIsResponse
+}
+
+/**
+ * ipwho.is response model — third GeoIP provider as additional fallback.
+ * Free, no API key required, generous rate limits (10k/month).
+ */
+data class IpWhoIsResponse(
+    val ip: String = "",
+    val success: Boolean = false,
+    val country: String = "",
+    val region: String = "",
+    val city: String = "",
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val connection: IpWhoIsConnection? = null
+)
+
+data class IpWhoIsConnection(
+    val org: String = "",
+    val isp: String = ""
+)
+
+/** Map ipwho.is response to the unified GeoIpResponse. */
+fun IpWhoIsResponse.toGeoIpResponse(): GeoIpResponse = GeoIpResponse(
+    ip = ip,
+    country_name = country,
+    region = region,
+    city = city,
+    latitude = latitude,
+    longitude = longitude,
+    org = connection?.org ?: connection?.isp ?: "",
+    error = !success
+)
+
 object GeoIpClient {
     private const val PREFS_NAME = "GeoIpCache"
     private const val KEY_CACHED_LOC = "cached_user_location"
+    private const val KEY_CACHED_TIMESTAMP = "cached_user_location_ts"
+    /** Cache TTL: 30 minutes — prevents stale location from persisting forever */
+    private const val CACHE_TTL_MS = 30 * 60 * 1000L
 
     private fun getCachedLocation(context: android.content.Context): GeoIpResponse? {
         val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_CACHED_LOC, null) ?: return null
+        // Check cache age — expire after TTL to prevent stale data
+        val ts = prefs.getLong(KEY_CACHED_TIMESTAMP, 0L)
+        if (ts > 0 && System.currentTimeMillis() - ts > CACHE_TTL_MS) {
+            clearCachedLocation(context)
+            return null
+        }
         return try { com.google.gson.Gson().fromJson(json, GeoIpResponse::class.java) } catch (e: Exception) { null }
     }
 
     private fun saveCachedLocation(context: android.content.Context, response: GeoIpResponse) {
         val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_CACHED_LOC, com.google.gson.Gson().toJson(response)).apply()
+        prefs.edit()
+            .putString(KEY_CACHED_LOC, com.google.gson.Gson().toJson(response))
+            .putLong(KEY_CACHED_TIMESTAMP, System.currentTimeMillis())
+            .apply()
     }
 
     private fun clearCachedLocation(context: android.content.Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-        prefs.edit().remove(KEY_CACHED_LOC).apply()
+        prefs.edit().remove(KEY_CACHED_LOC).remove(KEY_CACHED_TIMESTAMP).apply()
     }
 
     /** Check if any VPN transport is active on the device right now. */
@@ -98,8 +151,8 @@ object GeoIpClient {
     }
 
     private const val BROWSER_UA =
-        "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
     /** Shared OkHttpClient with browser User-Agent (ipapi.co 403-bans the default okhttp UA). */
     private val httpClient: okhttp3.OkHttpClient by lazy {
@@ -110,8 +163,8 @@ object GeoIpClient {
                     .build()
                 chain.proceed(request)
             }
-            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
 
@@ -132,6 +185,16 @@ object GeoIpClient {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(IpApiFallbackApi::class.java)
+    }
+
+    /** Third fallback API — ipwho.is (free, no key, generous limits). */
+    private val ipWhoIsApi: IpWhoIsApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://ipwho.is/")
+            .client(httpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(IpWhoIsApi::class.java)
     }
 
     private suspend fun <T> withRetry(
@@ -175,20 +238,109 @@ object GeoIpClient {
     }
 
     // -----------------------------------------------------------------
+    // Known server location overrides
+    // -----------------------------------------------------------------
+
+    /**
+     * Known GCP server locations by IP prefix.
+     *
+     * GeoIP databases frequently misattribute Google Cloud IPs (e.g. reporting
+     * California for servers in Iowa). Since we control the infrastructure and
+     * know exactly where each server is deployed, we override the GeoIP result
+     * with the correct coordinates when the server IP is recognized.
+     *
+     * us-central1 (Council Bluffs, Iowa): 41.2619, -95.8608
+     */
+    private data class KnownServer(
+        val city: String,
+        val region: String,
+        val latitude: Double,
+        val longitude: Double,
+        val org: String = "Google Cloud"
+    )
+
+    private val knownServers = mapOf(
+        // us-central1 — Council Bluffs, Iowa
+        "35.206." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "35.192." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "35.193." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "35.194." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "35.202." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "35.208." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.68." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.69." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.121." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.122." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.123." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.128." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.132." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.133." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.134." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.135." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        "34.136." to KnownServer("Council Bluffs", "Iowa", 41.2619, -95.8608),
+        // us-west1 — The Dalles, Oregon
+        "35.197." to KnownServer("The Dalles", "Oregon", 45.5946, -121.1787, "Google Cloud"),
+        "35.199." to KnownServer("The Dalles", "Oregon", 45.5946, -121.1787, "Google Cloud"),
+        "35.233." to KnownServer("The Dalles", "Oregon", 45.5946, -121.1787, "Google Cloud"),
+        // us-west2 — Los Angeles, California
+        "35.235." to KnownServer("Los Angeles", "California", 34.0522, -118.2437, "Google Cloud"),
+        // us-east1 — Moncks Corner, South Carolina
+        "35.196." to KnownServer("Moncks Corner", "South Carolina", 33.1960, -80.0131, "Google Cloud"),
+        "35.229." to KnownServer("Moncks Corner", "South Carolina", 33.1960, -80.0131, "Google Cloud")
+    )
+
+    /**
+     * Check if an IP matches a known GCP server and return its true location.
+     * Returns null if the IP is not recognized.
+     */
+    private fun getKnownServerLocation(ip: String): GeoIpResponse? {
+        for ((prefix, server) in knownServers) {
+            if (ip.startsWith(prefix)) {
+                return GeoIpResponse(
+                    ip = ip,
+                    country_name = "United States",
+                    region = server.region,
+                    city = server.city,
+                    latitude = server.latitude,
+                    longitude = server.longitude,
+                    org = server.org,
+                    error = false
+                )
+            }
+        }
+        return null
+    }
+
+    // -----------------------------------------------------------------
     // Fallback-aware lookup methods
     // -----------------------------------------------------------------
 
     /**
-     * Look up a specific IP with fallback: try ipapi.co first, then ip-api.com.
+     * Look up a specific IP with fallback: try known servers first, then
+     * ipapi.co, then ip-api.com, then ipwho.is.
      */
     suspend fun lookupWithFallback(ip: String): GeoIpResponse {
+        // Check known server locations first (bypasses unreliable GeoIP for our own infra)
+        getKnownServerLocation(ip)?.let { return it }
+
         return try {
             val primary = withRetry { api.lookup(ip) }
             if (!primary.error && primary.latitude != 0.0) primary
-            else withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
+            else tryFallbacks(ip)
+        } catch (_: Exception) {
+            tryFallbacks(ip)
+        }
+    }
+
+    /** Try ip-api.com then ipwho.is for a specific IP. */
+    private suspend fun tryFallbacks(ip: String): GeoIpResponse {
+        return try {
+            val fb = withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
+            if (!fb.error && fb.latitude != 0.0) fb
+            else withRetry { ipWhoIsApi.lookup(ip) }.toGeoIpResponse()
         } catch (_: Exception) {
             try {
-                withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
+                withRetry { ipWhoIsApi.lookup(ip) }.toGeoIpResponse()
             } catch (_: Exception) {
                 GeoIpResponse(error = true)
             }
@@ -196,16 +348,27 @@ object GeoIpClient {
     }
 
     /**
-     * Look up own IP with fallback: try ipapi.co first, then ip-api.com.
+     * Look up own IP with triple fallback: ipapi.co → ip-api.com → ipwho.is.
      */
     private suspend fun lookupSelfWithFallback(): GeoIpResponse {
         return try {
             val primary = withRetry { api.lookupSelf() }
             if (!primary.error && primary.latitude != 0.0) primary
-            else withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
+            else tryFallbacksSelf()
+        } catch (_: Exception) {
+            tryFallbacksSelf()
+        }
+    }
+
+    /** Try ip-api.com then ipwho.is for own IP. */
+    private suspend fun tryFallbacksSelf(): GeoIpResponse {
+        return try {
+            val fb = withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
+            if (!fb.error && fb.latitude != 0.0) fb
+            else withRetry { ipWhoIsApi.lookupSelf() }.toGeoIpResponse()
         } catch (_: Exception) {
             try {
-                withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
+                withRetry { ipWhoIsApi.lookupSelf() }.toGeoIpResponse()
             } catch (_: Exception) {
                 GeoIpResponse(error = true)
             }
@@ -245,7 +408,7 @@ object GeoIpClient {
             return GeoIpResponse(error = true)
         }
 
-        // 3. VPN is off — safe to fetch the user's real IP (with fallback)
+        // 3. VPN is off — safe to fetch the user's real IP (with triple fallback)
         val result = try {
             lookupSelfWithFallback()
         } catch (e: Exception) {
@@ -323,8 +486,8 @@ object GeoIpClient {
                             .build()
                         chain.proceed(request)
                     }
-                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
 
                 // Primary bypass API (ipapi.co)
@@ -343,15 +506,35 @@ object GeoIpClient {
                     .build()
                     .create(IpApiFallbackApi::class.java)
 
+                // Third fallback bypass API (ipwho.is)
+                val bypassIpWhoIs = Retrofit.Builder()
+                    .baseUrl("https://ipwho.is/")
+                    .client(client)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(IpWhoIsApi::class.java)
+
                 val r = try {
                     val primary = withRetry { bypassApi.lookupSelf() }
                     if (!primary.error && primary.latitude != 0.0) primary
-                    else withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                    else {
+                        val fb = try {
+                            withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                        } catch (_: Exception) { GeoIpResponse(error = true) }
+                        if (!fb.error && fb.latitude != 0.0) fb
+                        else withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                    }
                 } catch (_: Exception) {
                     try {
-                        withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                        val fb = withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
+                        if (!fb.error && fb.latitude != 0.0) fb
+                        else withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
                     } catch (_: Exception) {
-                        GeoIpResponse(error = true)
+                        try {
+                            withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                        } catch (_: Exception) {
+                            GeoIpResponse(error = true)
+                        }
                     }
                 }
 
@@ -367,7 +550,7 @@ object GeoIpClient {
             return GeoIpResponse(error = true)
         }
 
-        // No VPN active — safe to use the standard API (with fallback)
+        // No VPN active — safe to use the standard API (with triple fallback)
         val fallback = try {
             lookupSelfWithFallback()
         } catch (e: Exception) {
