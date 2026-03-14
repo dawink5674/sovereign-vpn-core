@@ -95,7 +95,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
     const pskFile = `/tmp/psk_${Date.now()}`;
     const commands = [
       `echo '${presharedKey}' > ${pskFile}`,
-      `sudo wg set ${WG_INTERFACE} peer ${publicKey} preshared-key ${pskFile} allowed-ips ${assignedIP}`,
+      `sudo wg set ${WG_INTERFACE} peer '${publicKey}' preshared-key ${pskFile} allowed-ips ${assignedIP}`,
       `rm -f ${pskFile}`,
     ].join(' && ');
 
@@ -120,7 +120,7 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -164,6 +164,13 @@ app.post('/api/peers', async (req, res) => {
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
+    const pubKeyRegex = /^[A-Za-z0-9+/]{43}=$/;
+    if (!pubKeyRegex.test(publicKey)) {
+      return res.status(400).json({
+        error: 'Invalid public key: must be a valid base64-encoded 32-byte Curve25519 key',
+      });
+    }
+
     const keyBuffer = Buffer.from(publicKey, 'base64');
     if (keyBuffer.length !== 32) {
       return res.status(400).json({
@@ -241,6 +248,11 @@ app.get('/api/peers', (_req, res) => {
 app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
+
+  const pubKeyRegex = /^[A-Za-z0-9+/]{43}=$/;
+  if (!pubKeyRegex.test(decoded)) {
+    return res.status(400).json({ error: 'Invalid public key format' });
+  }
 
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
