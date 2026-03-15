@@ -157,14 +157,16 @@ fun VpnDashboardScreen(
         if (!isConnected) {
             GeoIpClient.clearCache(context)
             // Re-fetch immediately — VPN is off so this will get the real IP
+            // IMPORTANT: Keep existing preVpnUserLoc if re-fetch fails (pin must never disappear)
             try {
                 kotlinx.coroutines.delay(1000) // Brief delay for VPN teardown
                 val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
                 if (!loc.error && loc.latitude != 0.0) {
                     preVpnUserLoc = loc
                 }
+                // If fetch returned error, keep the existing preVpnUserLoc (don't null it)
             } catch (_: Exception) {
-                preVpnUserLoc = null
+                // Keep existing location — never null out the user pin
             }
             return@LaunchedEffect
         }

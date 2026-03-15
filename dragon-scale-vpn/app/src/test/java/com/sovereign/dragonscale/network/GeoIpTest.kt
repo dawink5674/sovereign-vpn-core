@@ -133,6 +133,51 @@ class GeoIpTest {
         assertFalse(converted.error)
     }
 
+    // ---- ipinfo.io model tests ----
+
+    @Test
+    fun testIpInfoResponseConversion_success() {
+        val response = IpInfoResponse(
+            ip = "8.8.8.8",
+            city = "Mountain View",
+            region = "California",
+            country = "US",
+            loc = "37.3861,-122.0839",
+            org = "AS15169 Google LLC"
+        )
+
+        val converted = response.toGeoIpResponse()
+        assertEquals("8.8.8.8", converted.ip)
+        assertEquals("US", converted.country_name)
+        assertEquals("California", converted.region)
+        assertEquals("Mountain View", converted.city)
+        assertEquals(37.3861, converted.latitude, 0.001)
+        assertEquals(-122.0839, converted.longitude, 0.001)
+        assertEquals("AS15169 Google LLC", converted.org)
+        assertFalse(converted.error)
+    }
+
+    @Test
+    fun testIpInfoResponseConversion_emptyLoc() {
+        val response = IpInfoResponse(
+            ip = "0.0.0.0",
+            loc = ""
+        )
+        val converted = response.toGeoIpResponse()
+        assertTrue(converted.error)
+    }
+
+    @Test
+    fun testIpInfoResponseConversion_invalidLoc() {
+        val response = IpInfoResponse(
+            ip = "1.2.3.4",
+            loc = "not,valid"
+        )
+        val converted = response.toGeoIpResponse()
+        // "not" and "valid" parse to null → 0.0 → error
+        assertTrue(converted.error)
+    }
+
     // ---- Known GCP server location tests ----
 
     @Test

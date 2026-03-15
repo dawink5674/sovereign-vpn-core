@@ -25,10 +25,10 @@ import com.sovereign.dragonscale.ui.theme.*
 import kotlin.math.*
 
 // ===========================================================================
-// SOC Threat Map — US-Only, Canvas-Rendered
+// SOC Threat Map — Global Projection, Canvas-Rendered
 // ===========================================================================
 
-// US bounding box for projection
+// Default viewport (US CONUS) — used for map coastline/state rendering
 private const val US_LAT_N = 50.5
 private const val US_LAT_S = 23.5
 private const val US_LON_W = -130.0
@@ -55,11 +55,7 @@ fun ThreatMapPanel(
     // so it re-triggers if either changes. Coroutine auto-cancels on key change.
     LaunchedEffect(isConnected, serverIp) {
         if (isConnected) {
-            // Try known server lookup immediately (no network delay needed)
-            // — lookupWithFallback checks the known-server table first.
-            // Only wait for WireGuard routes if we need a network GeoIP call.
-            var attempts = 0
-            // First attempt: instant (known-server table returns immediately)
+            // First attempt: instant from known-server table (no network delay)
             try {
                 val loc = GeoIpClient.lookupWithFallback(serverIp)
                 if (loc.latitude != 0.0 && !loc.error) {
@@ -67,9 +63,13 @@ fun ThreatMapPanel(
                 }
             } catch (_: Exception) {}
 
-            // If known-server didn't match, wait for routes then retry with GeoIP APIs
+            // If known-server didn't match, wait for WireGuard routes then retry
+            // with exponential backoff: 1.5s, 3s, 6s, 12s, 24s, 30s, 30s, 30s
             if (serverLoc == null) {
                 kotlinx.coroutines.delay(1500)
+                var backoffMs = 3000L
+                val maxBackoffMs = 30_000L
+                var attempts = 0
                 while (serverLoc == null && attempts < 8) {
                     try {
                         val loc = GeoIpClient.lookupWithFallback(serverIp)
@@ -79,7 +79,10 @@ fun ThreatMapPanel(
                         }
                     } catch (_: Exception) {}
                     attempts++
-                    if (attempts < 8) kotlinx.coroutines.delay(2500)
+                    if (attempts < 8) {
+                        kotlinx.coroutines.delay(backoffMs)
+                        backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
+                    }
                 }
             }
         } else {
@@ -93,12 +96,17 @@ fun ThreatMapPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("THREAT MAP — CONUS", style = MaterialTheme.typography.labelLarge.copy(
+            Text("THREAT MAP", style = MaterialTheme.typography.labelLarge.copy(
                 letterSpacing = 2.sp), color = TextMuted)
+            // Show IP flow: user → server when connected, just user IP when disconnected
             if (isConnected && userLoc != null) {
-                Text("${userLoc?.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
+                Text("${userLoc.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace, fontSize = 9.sp
                 ), color = DragonCyan)
+            } else if (!isConnected && userLoc != null && userLoc.ip.isNotEmpty()) {
+                Text("IP: ${userLoc.ip}", style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace, fontSize = 9.sp
+                ), color = DragonCyan.copy(alpha = 0.7f))
             }
         }
 
@@ -110,15 +118,15 @@ fun ThreatMapPanel(
             Box(Modifier.fillMaxSize()) {
                 USMapCanvas(userLoc, serverLoc, isConnected)
 
-                // Overlays
+                // Overlays — connected with both locations
                 if (isConnected && userLoc != null && serverLoc != null) {
-                    // Bottom-left: location badges
+                    // Bottom-left: SRC + DST location badges
                     Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
-                        LocBadge("SRC", "${userLoc!!.city}, ${userLoc!!.region}", DragonCyan)
+                        LocBadge("SRC", "${userLoc.city}, ${userLoc.region}", DragonCyan)
                         Spacer(Modifier.height(3.dp))
                         LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
                     }
-                    // Top-right: status
+                    // Top-right: secure tunnel status
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(10.dp)
                             .background(Color(0xDD010612), RoundedCornerShape(6.dp))
@@ -132,13 +140,32 @@ fun ThreatMapPanel(
                         ), color = TextMuted)
                     }
                 }
-                // Show AWAITING only when disconnected AND no user pin visible
-                if (!isConnected && userLoc == null) {
+                // Disconnected but user location available — show SRC badge only
+                if (!isConnected && userLoc != null) {
+                    Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+                        LocBadge("SRC", "${userLoc.city}, ${userLoc.region}", DragonCyan)
+                    }
+                    // Top-right: disconnected status
+                    Column(
+                        Modifier.align(Alignment.TopEnd).padding(10.dp)
+                            .background(Color(0xDD010612), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text("● NOT CONNECTED", style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp, letterSpacing = 1.sp
+                        ), color = StatusDisconnected)
+                        Text("Tap CONNECT to secure", style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 7.sp
+                        ), color = TextMuted)
+                    }
+                }
+                // No user location at all — show locating message
+                if (userLoc == null) {
                     Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("AWAITING CONNECTION", style = MaterialTheme.typography.labelMedium.copy(
+                        Text("LOCATING...", style = MaterialTheme.typography.labelMedium.copy(
                             letterSpacing = 3.sp), color = TextMuted)
                         Spacer(Modifier.height(4.dp))
-                        Text("Connect VPN to activate threat map", style = MaterialTheme.typography.bodySmall.copy(
+                        Text("Detecting your location via GeoIP", style = MaterialTheme.typography.bodySmall.copy(
                             fontSize = 10.sp), color = TextMuted.copy(alpha = 0.5f))
                     }
                 }
@@ -200,12 +227,20 @@ private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView 
     return MapView(offsetX, offsetY, mapW, mapH, canvasW, canvasH, pad)
 }
 
+/**
+ * Project lat/lon to canvas pixels using the map viewport.
+ * Coordinates outside the US viewport are projected linearly (not clamped)
+ * so international locations still render at the correct relative position.
+ * Only NaN/Inf values are guarded against.
+ */
 private fun projectMV(lat: Double, lon: Double, mv: MapView): Offset {
     val x = mv.offsetX + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * mv.mapW).toFloat()
     val y = mv.offsetY + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * mv.mapH).toFloat()
+    // Clamp to canvas bounds (not US bounds) — allows global coordinates to
+    // appear at the edges rather than being forced to an incorrect position.
     return Offset(
-        x.coerceIn(mv.offsetX, mv.offsetX + mv.mapW),
-        y.coerceIn(mv.offsetY, mv.offsetY + mv.mapH)
+        x.coerceIn(0f, mv.canvasW),
+        y.coerceIn(0f, mv.canvasH)
     )
 }
 

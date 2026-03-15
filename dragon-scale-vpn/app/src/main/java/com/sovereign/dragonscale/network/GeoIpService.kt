@@ -73,6 +73,15 @@ interface IpWhoIsApi {
     suspend fun lookupSelf(): IpWhoIsResponse
 }
 
+/** Fourth fallback API interface for ipinfo.io */
+interface IpInfoApi {
+    @GET("{ip}/json")
+    suspend fun lookup(@Path("ip") ip: String): IpInfoResponse
+
+    @GET("json")
+    suspend fun lookupSelf(): IpInfoResponse
+}
+
 /**
  * ipwho.is response model — third GeoIP provider as additional fallback.
  * Free, no API key required, generous rate limits (10k/month).
@@ -104,6 +113,37 @@ fun IpWhoIsResponse.toGeoIpResponse(): GeoIpResponse = GeoIpResponse(
     org = connection?.org ?: connection?.isp ?: "",
     error = !success
 )
+
+/**
+ * ipinfo.io response model — fourth GeoIP provider.
+ * Free tier: 50k requests/month, no API key required for basic info.
+ * Returns lat/lon as a comma-separated "loc" string.
+ */
+data class IpInfoResponse(
+    val ip: String = "",
+    val city: String = "",
+    val region: String = "",
+    val country: String = "",
+    val loc: String = "",  // "lat,lon" format
+    val org: String = ""
+)
+
+/** Map ipinfo.io response to the unified GeoIpResponse. */
+fun IpInfoResponse.toGeoIpResponse(): GeoIpResponse {
+    val parts = loc.split(",")
+    val lat = parts.getOrNull(0)?.toDoubleOrNull() ?: 0.0
+    val lon = parts.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+    return GeoIpResponse(
+        ip = ip,
+        country_name = country,
+        region = region,
+        city = city,
+        latitude = lat,
+        longitude = lon,
+        org = org,
+        error = loc.isEmpty() || lat == 0.0
+    )
+}
 
 object GeoIpClient {
     private const val PREFS_NAME = "GeoIpCache"
@@ -195,6 +235,16 @@ object GeoIpClient {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(IpWhoIsApi::class.java)
+    }
+
+    /** Fourth fallback API — ipinfo.io (free tier 50k/month, no key for basic). */
+    private val ipInfoApi: IpInfoApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://ipinfo.io/")
+            .client(httpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(IpInfoApi::class.java)
     }
 
     private suspend fun <T> withRetry(
@@ -332,15 +382,25 @@ object GeoIpClient {
         }
     }
 
-    /** Try ip-api.com then ipwho.is for a specific IP. */
+    /** Try ip-api.com → ipwho.is → ipinfo.io for a specific IP. */
     private suspend fun tryFallbacks(ip: String): GeoIpResponse {
         return try {
             val fb = withRetry { fallbackApi.lookup(ip) }.toGeoIpResponse()
             if (!fb.error && fb.latitude != 0.0) fb
-            else withRetry { ipWhoIsApi.lookup(ip) }.toGeoIpResponse()
+            else tryIpWhoIsThenIpInfo(ip)
+        } catch (_: Exception) {
+            tryIpWhoIsThenIpInfo(ip)
+        }
+    }
+
+    private suspend fun tryIpWhoIsThenIpInfo(ip: String): GeoIpResponse {
+        return try {
+            val r = withRetry { ipWhoIsApi.lookup(ip) }.toGeoIpResponse()
+            if (!r.error && r.latitude != 0.0) r
+            else withRetry { ipInfoApi.lookup(ip) }.toGeoIpResponse()
         } catch (_: Exception) {
             try {
-                withRetry { ipWhoIsApi.lookup(ip) }.toGeoIpResponse()
+                withRetry { ipInfoApi.lookup(ip) }.toGeoIpResponse()
             } catch (_: Exception) {
                 GeoIpResponse(error = true)
             }
@@ -360,15 +420,25 @@ object GeoIpClient {
         }
     }
 
-    /** Try ip-api.com then ipwho.is for own IP. */
+    /** Try ip-api.com → ipwho.is → ipinfo.io for own IP. */
     private suspend fun tryFallbacksSelf(): GeoIpResponse {
         return try {
             val fb = withRetry { fallbackApi.lookupSelf() }.toGeoIpResponse()
             if (!fb.error && fb.latitude != 0.0) fb
-            else withRetry { ipWhoIsApi.lookupSelf() }.toGeoIpResponse()
+            else tryIpWhoIsThenIpInfoSelf()
+        } catch (_: Exception) {
+            tryIpWhoIsThenIpInfoSelf()
+        }
+    }
+
+    private suspend fun tryIpWhoIsThenIpInfoSelf(): GeoIpResponse {
+        return try {
+            val r = withRetry { ipWhoIsApi.lookupSelf() }.toGeoIpResponse()
+            if (!r.error && r.latitude != 0.0) r
+            else withRetry { ipInfoApi.lookupSelf() }.toGeoIpResponse()
         } catch (_: Exception) {
             try {
-                withRetry { ipWhoIsApi.lookupSelf() }.toGeoIpResponse()
+                withRetry { ipInfoApi.lookupSelf() }.toGeoIpResponse()
             } catch (_: Exception) {
                 GeoIpResponse(error = true)
             }
@@ -514,6 +584,14 @@ object GeoIpClient {
                     .build()
                     .create(IpWhoIsApi::class.java)
 
+                // Fourth fallback bypass API (ipinfo.io)
+                val bypassIpInfo = Retrofit.Builder()
+                    .baseUrl("https://ipinfo.io/")
+                    .client(client)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(IpInfoApi::class.java)
+
                 val r = try {
                     val primary = withRetry { bypassApi.lookupSelf() }
                     if (!primary.error && primary.latitude != 0.0) primary
@@ -522,18 +600,36 @@ object GeoIpClient {
                             withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
                         } catch (_: Exception) { GeoIpResponse(error = true) }
                         if (!fb.error && fb.latitude != 0.0) fb
-                        else withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                        else {
+                            val ipw = try {
+                                withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                            } catch (_: Exception) { GeoIpResponse(error = true) }
+                            if (!ipw.error && ipw.latitude != 0.0) ipw
+                            else withRetry { bypassIpInfo.lookupSelf() }.toGeoIpResponse()
+                        }
                     }
                 } catch (_: Exception) {
                     try {
                         val fb = withRetry { bypassFallbackApi.lookupSelf() }.toGeoIpResponse()
                         if (!fb.error && fb.latitude != 0.0) fb
-                        else withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                        else {
+                            val ipw = try {
+                                withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                            } catch (_: Exception) { GeoIpResponse(error = true) }
+                            if (!ipw.error && ipw.latitude != 0.0) ipw
+                            else withRetry { bypassIpInfo.lookupSelf() }.toGeoIpResponse()
+                        }
                     } catch (_: Exception) {
                         try {
-                            withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                            val ipw = withRetry { bypassIpWhoIs.lookupSelf() }.toGeoIpResponse()
+                            if (!ipw.error && ipw.latitude != 0.0) ipw
+                            else withRetry { bypassIpInfo.lookupSelf() }.toGeoIpResponse()
                         } catch (_: Exception) {
-                            GeoIpResponse(error = true)
+                            try {
+                                withRetry { bypassIpInfo.lookupSelf() }.toGeoIpResponse()
+                            } catch (_: Exception) {
+                                GeoIpResponse(error = true)
+                            }
                         }
                     }
                 }
