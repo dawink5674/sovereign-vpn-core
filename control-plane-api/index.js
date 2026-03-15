@@ -25,6 +25,30 @@ const peers = new Map();
 let nextIP = 2; // .1 is the server
 
 // ---------------------------------------------------------------------------
+// Auth middleware — require API key for protected endpoints
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY not set' });
+  }
+
+  const clientKey = req.header('X-API-Key');
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  const adminBuffer = Buffer.from(adminKey, 'utf-8');
+  const clientBuffer = Buffer.from(clientKey, 'utf-8');
+
+  if (adminBuffer.length !== clientBuffer.length || !crypto.timingSafeEqual(adminBuffer, clientBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+
+  next();
+}
+
+// ---------------------------------------------------------------------------
 // SSH helper — execute a command on the WireGuard server
 // ---------------------------------------------------------------------------
 function sshExec(command, stdinData = null) {
@@ -151,7 +175,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +248,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +262,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
