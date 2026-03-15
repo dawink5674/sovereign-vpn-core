@@ -32,6 +32,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.window.core.layout.WindowWidthSizeClass
 import com.sovereign.dragonscale.network.GeoIpClient
 import com.sovereign.dragonscale.network.GeoIpResponse
@@ -85,28 +88,80 @@ fun VpnDashboardScreen(
     // --- Fetch real user location ---
     // Strategy: (1) Eagerly cache real IP before VPN starts (most reliable),
     //           (2) Fall back to bypass lookup if VPN is already active.
+    //           (3) Re-fetch on app resume (handles fold/unfold, backgrounding).
     //           serverIp is passed for cache-poisoning detection (if cached IP == server IP, clear it).
     //           Keyed on isConnected boolean (not vpnState object) to avoid recomposition cancellation.
     val isConnected = vpnState == Tunnel.State.UP
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
 
-    // EAGER FETCH: Get user's real location immediately on screen load (before VPN connects)
-    // This is the most reliable path — VPN is guaranteed to be off at first composition
-    LaunchedEffect(Unit) {
-        if (preVpnUserLoc == null) {
+    // Track fetch state to prevent concurrent fetches
+    var isFetchingLocation by remember { mutableStateOf(false) }
+
+    /**
+     * Centralized location fetch function — tries all strategies in order:
+     * 1. Cache (fastest)
+     * 2. Direct fetch (when VPN is off)
+     * 3. Bypass fetch (when VPN is on)
+     */
+    suspend fun fetchUserLocation() {
+        if (isFetchingLocation) return
+        isFetchingLocation = true
+        try {
             var attempts = 0
             while (preVpnUserLoc == null && attempts < 5) {
                 try {
+                    // Try direct fetch first (works when VPN is off or has valid cache)
                     val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
                     if (!loc.error && loc.latitude != 0.0) {
                         preVpnUserLoc = loc
+                        break
+                    }
+                    // If direct fetch returned error (VPN active), try bypass
+                    val bypass = GeoIpClient.lookupSelfBypassVpn(context, serverIp)
+                    if (!bypass.error && bypass.latitude != 0.0) {
+                        preVpnUserLoc = bypass
                         break
                     }
                 } catch (_: Exception) {}
                 attempts++
                 if (attempts < 5) kotlinx.coroutines.delay(2000)
             }
+        } finally {
+            isFetchingLocation = false
         }
+    }
+
+    // EAGER FETCH: Get user's real location immediately on screen load (before VPN connects)
+    // This is the most reliable path — VPN is guaranteed to be off at first composition
+    LaunchedEffect(Unit) {
+        if (preVpnUserLoc == null) {
+            fetchUserLocation()
+        }
+    }
+
+    // RE-FETCH ON APP RESUME: Handles fold/unfold, app backgrounding, and activity recreation.
+    // Always re-fetch to ensure we have current location (cache TTL handles freshness).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    // Always attempt re-fetch; fetchUserLocation() is a no-op if already fetching.
+                    // If VPN is not active, this will refresh with the real IP.
+                    // If VPN is active, it will use cache or bypass strategy.
+                    if (!isConnected) {
+                        // VPN is off — safe to re-fetch real location
+                        preVpnUserLoc = null  // Force re-fetch
+                        fetchUserLocation()
+                    } else if (preVpnUserLoc == null) {
+                        // VPN is on but we have no location — try bypass
+                        fetchUserLocation()
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(isConnected) {
@@ -114,40 +169,24 @@ fun VpnDashboardScreen(
         if (!isConnected) {
             GeoIpClient.clearCache(context)
             // Re-fetch immediately — VPN is off so this will get the real IP
+            // IMPORTANT: Keep existing preVpnUserLoc if re-fetch fails (pin must never disappear)
             try {
                 kotlinx.coroutines.delay(1000) // Brief delay for VPN teardown
                 val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
                 if (!loc.error && loc.latitude != 0.0) {
                     preVpnUserLoc = loc
                 }
+                // If fetch returned error, keep the existing preVpnUserLoc (don't null it)
             } catch (_: Exception) {
-                preVpnUserLoc = null
+                // Keep existing location — never null out the user pin
             }
             return@LaunchedEffect
         }
-        // Skip re-fetch if we already have a valid location for THIS session
+        // When connecting: if we already have a valid location, skip re-fetch
         if (preVpnUserLoc != null) return@LaunchedEffect
 
-        var attempts = 0
-        while (preVpnUserLoc == null && attempts < 7) {
-            try {
-                // First try the eager (non-bypass) fetch — works perfectly when VPN is off
-                val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
-                if (!loc.error && loc.latitude != 0.0) {
-                    preVpnUserLoc = loc
-                    break
-                }
-                // If that returned an error (e.g. VPN already active), try bypass
-                val bypass = GeoIpClient.lookupSelfBypassVpn(context, serverIp)
-                if (!bypass.error && bypass.latitude != 0.0) {
-                    preVpnUserLoc = bypass
-                    break
-                }
-            } catch (_: Exception) {}
-
-            attempts++
-            if (attempts < 7) kotlinx.coroutines.delay(3000)
-        }
+        // VPN just connected but we have no user location — try bypass
+        fetchUserLocation()
     }
 
     // Collect network monitor flows
@@ -444,19 +483,19 @@ private fun FoldedLayout(
                 HorizontalDivider(color = SurfaceCard, modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
 
-                DrawerMenuItem("🐉", "Connection", currentPage == FoldedPage.CONNECTION) {
+                DrawerMenuItem("\uD83D\uDC09", "Connection", currentPage == FoldedPage.CONNECTION) {
                     currentPage = FoldedPage.CONNECTION
                     scope.launch { drawerState.close() }
                 }
-                DrawerMenuItem("🔒", "Tunnel Status", currentPage == FoldedPage.TUNNEL_STATUS) {
+                DrawerMenuItem("\uD83D\uDD12", "Tunnel Status", currentPage == FoldedPage.TUNNEL_STATUS) {
                     currentPage = FoldedPage.TUNNEL_STATUS
                     scope.launch { drawerState.close() }
                 }
-                DrawerMenuItem("📊", "Routing Log", currentPage == FoldedPage.ROUTING_LOG) {
+                DrawerMenuItem("\uD83D\uDCCA", "Routing Log", currentPage == FoldedPage.ROUTING_LOG) {
                     currentPage = FoldedPage.ROUTING_LOG
                     scope.launch { drawerState.close() }
                 }
-                DrawerMenuItem("🗺️", "Threat Map", currentPage == FoldedPage.THREAT_MAP) {
+                DrawerMenuItem("\uD83D\uDDFA\uFE0F", "Threat Map", currentPage == FoldedPage.THREAT_MAP) {
                     currentPage = FoldedPage.THREAT_MAP
                     scope.launch { drawerState.close() }
                 }
@@ -745,7 +784,7 @@ fun ConnectionPanel(
                     .border(1.dp, statusColor.copy(alpha = 0.3f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "🐉", fontSize = 64.sp)
+                Text(text = "\uD83D\uDC09", fontSize = 64.sp)
             }
         }
 
@@ -789,7 +828,7 @@ fun ConnectionPanel(
                 Text("ENCRYPTION", style = MaterialTheme.typography.labelSmall, color = TextMuted)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Curve25519 • ChaCha20-Poly1305 • BLAKE2s",
+                    "Curve25519 \u2022 ChaCha20-Poly1305 \u2022 BLAKE2s",
                     style = MaterialTheme.typography.bodyMedium,
                     color = DragonCyan,
                     textAlign = TextAlign.Center
@@ -827,7 +866,7 @@ fun TunnelStatusCard(
             StatRow("Key Exchange", "Curve25519 (ECDH)")
             StatRow("Hash", "BLAKE2s")
             StatRow("Port", "51820/UDP")
-            StatRow("State", if (vpnState == Tunnel.State.UP) "🟢 UP" else "🔴 DOWN")
+            StatRow("State", if (vpnState == Tunnel.State.UP) "\uD83D\uDFE2 UP" else "\uD83D\uDD34 DOWN")
 
             if (vpnState == Tunnel.State.UP) {
                 HorizontalDivider(
@@ -838,8 +877,8 @@ fun TunnelStatusCard(
                 Spacer(Modifier.height(8.dp))
                 StatRow("Network", networkType)
                 StatRow("Last Handshake", lastHandshake)
-                StatRow("↓ Download", "${NetworkMonitor.formatBytes(rxBytes)} ($rxRate)")
-                StatRow("↑ Upload", "${NetworkMonitor.formatBytes(txBytes)} ($txRate)")
+                StatRow("\u2193 Download", "${NetworkMonitor.formatBytes(rxBytes)} ($rxRate)")
+                StatRow("\u2191 Upload", "${NetworkMonitor.formatBytes(txBytes)} ($txRate)")
             }
         }
     }
@@ -876,11 +915,11 @@ fun EnhancedRoutingLog(logEntries: List<LogEntry>) {
                             // Type icon
                             Text(
                                 text = when (entry.type) {
-                                    LogType.INFO -> "ℹ️"
-                                    LogType.ERROR -> "🔴"
-                                    LogType.TRAFFIC -> "📶"
-                                    LogType.NETWORK -> "🌐"
-                                    LogType.DNS -> "🔍"
+                                    LogType.INFO -> "\u2139\uFE0F"
+                                    LogType.ERROR -> "\uD83D\uDD34"
+                                    LogType.TRAFFIC -> "\uD83D\uDCF6"
+                                    LogType.NETWORK -> "\uD83C\uDF10"
+                                    LogType.DNS -> "\uD83D\uDD0D"
                                 },
                                 fontSize = 10.sp,
                                 modifier = Modifier.width(20.dp)

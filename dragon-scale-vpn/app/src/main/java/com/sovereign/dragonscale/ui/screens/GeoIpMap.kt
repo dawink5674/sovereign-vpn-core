@@ -25,14 +25,15 @@ import com.sovereign.dragonscale.ui.theme.*
 import kotlin.math.*
 
 // ===========================================================================
-// SOC Threat Map — US-Only, Canvas-Rendered
+// SOC Threat Map — Global Projection, Canvas-Rendered
 // ===========================================================================
 
-// US bounding box for projection
-private const val US_LAT_N = 50.5
-private const val US_LAT_S = 23.5
-private const val US_LON_W = -130.0
-private const val US_LON_E = -65.0
+// World-aware bounding box for projection (wider range to show non-US locations)
+// Covers CONUS with generous margins; non-US pins project to nearest edge
+private const val MAP_LAT_N = 52.0
+private const val MAP_LAT_S = 22.0
+private const val MAP_LON_W = -132.0
+private const val MAP_LON_E = -63.0
 
 @Composable
 fun ThreatMapPanel(
@@ -55,19 +56,35 @@ fun ThreatMapPanel(
     // so it re-triggers if either changes. Coroutine auto-cancels on key change.
     LaunchedEffect(isConnected, serverIp) {
         if (isConnected) {
-            // Wait for WireGuard to fully establish routes
-            kotlinx.coroutines.delay(2500)
-            var attempts = 0
-            while (serverLoc == null && attempts < 6) {
-                try {
-                    val loc = GeoIpClient.lookupWithFallback(serverIp)
-                    if (loc.latitude != 0.0) {
-                        serverLoc = loc
-                        break
+            // First attempt: instant from known-server table (no network delay)
+            try {
+                val loc = GeoIpClient.lookupWithFallback(serverIp)
+                if (loc.latitude != 0.0 && !loc.error) {
+                    serverLoc = loc
+                }
+            } catch (_: Exception) {}
+
+            // If known-server didn't match, wait for WireGuard routes then retry
+            // with exponential backoff: 1.5s, 3s, 6s, 12s, 24s, 30s, 30s, 30s
+            if (serverLoc == null) {
+                kotlinx.coroutines.delay(1500)
+                var backoffMs = 3000L
+                val maxBackoffMs = 30_000L
+                var attempts = 0
+                while (serverLoc == null && attempts < 8) {
+                    try {
+                        val loc = GeoIpClient.lookupWithFallback(serverIp)
+                        if (loc.latitude != 0.0 && !loc.error) {
+                            serverLoc = loc
+                            break
+                        }
+                    } catch (_: Exception) {}
+                    attempts++
+                    if (attempts < 8) {
+                        kotlinx.coroutines.delay(backoffMs)
+                        backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
                     }
-                } catch (_: Exception) {}
-                attempts++
-                if (attempts < 6) kotlinx.coroutines.delay(3000)
+                }
             }
         } else {
             serverLoc = null // Clear map destination pin when disconnected
@@ -80,12 +97,17 @@ fun ThreatMapPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("THREAT MAP — CONUS", style = MaterialTheme.typography.labelLarge.copy(
+            Text("THREAT MAP", style = MaterialTheme.typography.labelLarge.copy(
                 letterSpacing = 2.sp), color = TextMuted)
+            // Show IP flow: user → server when connected, just user IP when disconnected
             if (isConnected && userLoc != null) {
-                Text("${userLoc?.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
+                Text("${userLoc.ip} ➜ $serverIp", style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace, fontSize = 9.sp
                 ), color = DragonCyan)
+            } else if (!isConnected && userLoc != null && userLoc.ip.isNotEmpty()) {
+                Text("IP: ${userLoc.ip}", style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace, fontSize = 9.sp
+                ), color = DragonCyan.copy(alpha = 0.7f))
             }
         }
 
@@ -97,15 +119,21 @@ fun ThreatMapPanel(
             Box(Modifier.fillMaxSize()) {
                 USMapCanvas(userLoc, serverLoc, isConnected)
 
-                // Overlays
-                if (isConnected && userLoc != null && serverLoc != null) {
+                // Overlays — SRC badge always visible when we have user location
+                if (userLoc != null) {
                     // Bottom-left: location badges
                     Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
-                        LocBadge("SRC", "${userLoc!!.city}, ${userLoc!!.region}", DragonCyan)
-                        Spacer(Modifier.height(3.dp))
-                        LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
+                        LocBadge("SRC", "${userLoc.city}, ${userLoc.region}", DragonCyan)
+                        if (isConnected && serverLoc != null) {
+                            Spacer(Modifier.height(3.dp))
+                            LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
+                        }
                     }
-                    // Top-right: status
+                }
+
+                // Top-right: status badge
+                if (isConnected && userLoc != null && serverLoc != null) {
+                    // Secure tunnel status
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(10.dp)
                             .background(Color(0xDD010612), RoundedCornerShape(6.dp))
@@ -118,14 +146,29 @@ fun ThreatMapPanel(
                             fontSize = 7.sp
                         ), color = TextMuted)
                     }
+                } else if (!isConnected && userLoc != null) {
+                    // Show detected IP HUD when disconnected with known location
+                    Column(
+                        Modifier.align(Alignment.TopEnd).padding(10.dp)
+                            .background(Color(0xDD010612), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text("● DETECTED IP", style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp, letterSpacing = 1.sp
+                        ), color = DragonCyan)
+                        Text(userLoc.ip, style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp, fontFamily = FontFamily.Monospace
+                        ), color = TextSecondary)
+                    }
                 }
-                // Show AWAITING only when disconnected AND no user pin visible
-                if (!isConnected && userLoc == null) {
+
+                // No user location at all — show locating message
+                if (userLoc == null) {
                     Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("AWAITING CONNECTION", style = MaterialTheme.typography.labelMedium.copy(
+                        Text("LOCATING...", style = MaterialTheme.typography.labelMedium.copy(
                             letterSpacing = 3.sp), color = TextMuted)
                         Spacer(Modifier.height(4.dp))
-                        Text("Connect VPN to activate threat map", style = MaterialTheme.typography.bodySmall.copy(
+                        Text("Detecting your location via GeoIP", style = MaterialTheme.typography.bodySmall.copy(
                             fontSize = 10.sp), color = TextMuted.copy(alpha = 0.5f))
                     }
                 }
@@ -165,8 +208,6 @@ private data class MapView(
 private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView {
     val availW = canvasW - 2 * pad
     val availH = canvasH - 2 * pad
-    val geoW = US_LON_E - US_LON_W    // 65°
-    val geoH = US_LAT_N - US_LAT_S    // 27°
     // Use 1.85 instead of natural 2.41 for more vertical presence
     // (compensates for latitude compression at mid-latitudes)
     val geoAspect = 1.85
@@ -187,12 +228,19 @@ private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView 
     return MapView(offsetX, offsetY, mapW, mapH, canvasW, canvasH, pad)
 }
 
+/**
+ * Project lat/lon to canvas pixels using the map viewport.
+ * Coordinates outside the viewport are projected linearly (not clamped)
+ * so international locations still render at the correct relative position.
+ * Clamp to canvas bounds (not map bounds) — allows global coordinates to
+ * appear at the edges rather than being forced to an incorrect position.
+ */
 private fun projectMV(lat: Double, lon: Double, mv: MapView): Offset {
-    val x = mv.offsetX + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * mv.mapW).toFloat()
-    val y = mv.offsetY + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * mv.mapH).toFloat()
+    val x = mv.offsetX + ((lon - MAP_LON_W) / (MAP_LON_E - MAP_LON_W) * mv.mapW).toFloat()
+    val y = mv.offsetY + ((MAP_LAT_N - lat) / (MAP_LAT_N - MAP_LAT_S) * mv.mapH).toFloat()
     return Offset(
-        x.coerceIn(mv.offsetX, mv.offsetX + mv.mapW),
-        y.coerceIn(mv.offsetY, mv.offsetY + mv.mapH)
+        x.coerceIn(0f, mv.canvasW),
+        y.coerceIn(0f, mv.canvasH)
     )
 }
 
