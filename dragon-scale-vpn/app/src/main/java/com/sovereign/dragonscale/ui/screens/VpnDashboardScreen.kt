@@ -140,12 +140,24 @@ fun VpnDashboardScreen(
     }
 
     // RE-FETCH ON APP RESUME: Handles fold/unfold, app backgrounding, and activity recreation.
-    // If we lost the location (e.g. process death), re-fetch when the activity resumes.
+    // Always re-fetch to ensure we have current location (cache TTL handles freshness).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && preVpnUserLoc == null) {
-                scope.launch { fetchUserLocation() }
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    // Always attempt re-fetch; fetchUserLocation() is a no-op if already fetching.
+                    // If VPN is not active, this will refresh with the real IP.
+                    // If VPN is active, it will use cache or bypass strategy.
+                    if (!isConnected) {
+                        // VPN is off — safe to re-fetch real location
+                        preVpnUserLoc = null  // Force re-fetch
+                        fetchUserLocation()
+                    } else if (preVpnUserLoc == null) {
+                        // VPN is on but we have no location — try bypass
+                        fetchUserLocation()
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

@@ -28,11 +28,12 @@ import kotlin.math.*
 // SOC Threat Map — Global Projection, Canvas-Rendered
 // ===========================================================================
 
-// Default viewport (US CONUS) — used for map coastline/state rendering
-private const val US_LAT_N = 50.5
-private const val US_LAT_S = 23.5
-private const val US_LON_W = -130.0
-private const val US_LON_E = -65.0
+// World-aware bounding box for projection (wider range to show non-US locations)
+// Covers CONUS with generous margins; non-US pins project to nearest edge
+private const val MAP_LAT_N = 52.0
+private const val MAP_LAT_S = 22.0
+private const val MAP_LON_W = -132.0
+private const val MAP_LON_E = -63.0
 
 @Composable
 fun ThreatMapPanel(
@@ -118,15 +119,21 @@ fun ThreatMapPanel(
             Box(Modifier.fillMaxSize()) {
                 USMapCanvas(userLoc, serverLoc, isConnected)
 
-                // Overlays — connected with both locations
-                if (isConnected && userLoc != null && serverLoc != null) {
-                    // Bottom-left: SRC + DST location badges
+                // Overlays — SRC badge always visible when we have user location
+                if (userLoc != null) {
+                    // Bottom-left: location badges
                     Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
                         LocBadge("SRC", "${userLoc.city}, ${userLoc.region}", DragonCyan)
-                        Spacer(Modifier.height(3.dp))
-                        LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
+                        if (isConnected && serverLoc != null) {
+                            Spacer(Modifier.height(3.dp))
+                            LocBadge("DST", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
+                        }
                     }
-                    // Top-right: secure tunnel status
+                }
+
+                // Top-right: status badge
+                if (isConnected && userLoc != null && serverLoc != null) {
+                    // Secure tunnel status
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(10.dp)
                             .background(Color(0xDD010612), RoundedCornerShape(6.dp))
@@ -139,26 +146,22 @@ fun ThreatMapPanel(
                             fontSize = 7.sp
                         ), color = TextMuted)
                     }
-                }
-                // Disconnected but user location available — show SRC badge only
-                if (!isConnected && userLoc != null) {
-                    Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
-                        LocBadge("SRC", "${userLoc.city}, ${userLoc.region}", DragonCyan)
-                    }
-                    // Top-right: disconnected status
+                } else if (!isConnected && userLoc != null) {
+                    // Show detected IP HUD when disconnected with known location
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(10.dp)
                             .background(Color(0xDD010612), RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("● NOT CONNECTED", style = MaterialTheme.typography.labelSmall.copy(
+                        Text("● DETECTED IP", style = MaterialTheme.typography.labelSmall.copy(
                             fontSize = 8.sp, letterSpacing = 1.sp
-                        ), color = StatusDisconnected)
-                        Text("Tap CONNECT to secure", style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 7.sp
-                        ), color = TextMuted)
+                        ), color = DragonCyan)
+                        Text(userLoc.ip, style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp, fontFamily = FontFamily.Monospace
+                        ), color = TextSecondary)
                     }
                 }
+
                 // No user location at all — show locating message
                 if (userLoc == null) {
                     Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -205,8 +208,6 @@ private data class MapView(
 private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView {
     val availW = canvasW - 2 * pad
     val availH = canvasH - 2 * pad
-    val geoW = US_LON_E - US_LON_W    // 65°
-    val geoH = US_LAT_N - US_LAT_S    // 27°
     // Use 1.85 instead of natural 2.41 for more vertical presence
     // (compensates for latitude compression at mid-latitudes)
     val geoAspect = 1.85
@@ -229,15 +230,14 @@ private fun computeMapView(canvasW: Float, canvasH: Float, pad: Float): MapView 
 
 /**
  * Project lat/lon to canvas pixels using the map viewport.
- * Coordinates outside the US viewport are projected linearly (not clamped)
+ * Coordinates outside the viewport are projected linearly (not clamped)
  * so international locations still render at the correct relative position.
- * Only NaN/Inf values are guarded against.
+ * Clamp to canvas bounds (not map bounds) — allows global coordinates to
+ * appear at the edges rather than being forced to an incorrect position.
  */
 private fun projectMV(lat: Double, lon: Double, mv: MapView): Offset {
-    val x = mv.offsetX + ((lon - US_LON_W) / (US_LON_E - US_LON_W) * mv.mapW).toFloat()
-    val y = mv.offsetY + ((US_LAT_N - lat) / (US_LAT_N - US_LAT_S) * mv.mapH).toFloat()
-    // Clamp to canvas bounds (not US bounds) — allows global coordinates to
-    // appear at the edges rather than being forced to an incorrect position.
+    val x = mv.offsetX + ((lon - MAP_LON_W) / (MAP_LON_E - MAP_LON_W) * mv.mapW).toFloat()
+    val y = mv.offsetY + ((MAP_LAT_N - lat) / (MAP_LAT_N - MAP_LAT_S) * mv.mapH).toFloat()
     return Offset(
         x.coerceIn(0f, mv.canvasW),
         y.coerceIn(0f, mv.canvasH)
