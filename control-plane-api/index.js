@@ -143,6 +143,32 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Authorization Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY is not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header is missing' });
+  }
+
+  const adminKeyBuf = Buffer.from(adminKey);
+  const providedKeyBuf = Buffer.from(providedKey);
+
+  if (adminKeyBuf.length !== providedKeyBuf.length || !crypto.timingSafeEqual(adminKeyBuf, providedKeyBuf)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', requireAuth);
+
+// ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
 // The client generates its own keypair locally and sends ONLY the public key.
@@ -161,6 +187,11 @@ app.post('/api/peers', async (req, res) => {
 
     if (!publicKey || typeof publicKey !== 'string') {
       return res.status(400).json({ error: 'Client public key (base64) is required' });
+    }
+
+    // Strict regex validation for Base64 (Curve25519 keys are 44 chars ending in '=')
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      return res.status(400).json({ error: 'Invalid public key format' });
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
@@ -225,12 +256,10 @@ app.post('/api/peers', async (req, res) => {
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
 app.get('/api/peers', (_req, res) => {
-  const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
-    name,
-    publicKey,
-    assignedIP,
-    createdAt,
-  }));
+  const peerList = [];
+  for (const { name, publicKey, assignedIP, createdAt } of peers.values()) {
+    peerList.push({ name, publicKey, assignedIP, createdAt });
+  }
 
   res.status(200).json({ count: peerList.length, peers: peerList });
 });
@@ -241,6 +270,11 @@ app.get('/api/peers', (_req, res) => {
 app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
+
+  // Strict regex validation to prevent command injection
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(decoded)) {
+    return res.status(400).json({ error: 'Invalid public key format' });
+  }
 
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
