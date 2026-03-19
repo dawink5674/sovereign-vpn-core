@@ -20,6 +20,36 @@ const WG_INTERFACE = process.env.WG_INTERFACE || 'wg0';
 
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Authentication middleware — protects all /api/peers routes
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  // Read dynamically per request to allow test suite modifications
+  const apiKey = process.env.ADMIN_API_KEY;
+  if (!apiKey) {
+    // Fail-closed posture
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY is not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  // Convert to buffers and check length before timingSafeEqual to prevent runtime errors
+  const keyBuffer = Buffer.from(apiKey);
+  const providedBuffer = Buffer.from(providedKey);
+
+  if (keyBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(keyBuffer, providedBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
+  }
+
+  next();
+}
+
+// Enforce authentication centrally on all peer endpoints
+app.use('/api/peers', requireAuth);
+
 // In-memory peer store (replace with Firestore in production)
 const peers = new Map();
 let nextIP = 2; // .1 is the server
