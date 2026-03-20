@@ -27,6 +27,7 @@ import javax.inject.Singleton
  * VpnManager — orchestrates the zero-trust VPN lifecycle.
  *
  * Enhancements over Dragon Scale:
+ * - Explicit connect/disconnect (no toggle-based state that can desync)
  * - Kill switch support via DNS leak protection
  * - Auto-reconnect capability
  * - Connection timing metrics
@@ -63,7 +64,7 @@ class VpnManager @Inject constructor(private val context: Context) {
         }
     }
 
-    fun prepareVpn(activity: Activity): Intent? = VpnService.prepare(activity)
+    fun prepareVpn(activity: Activity): Intent? = GoBackend.VpnService.prepare(activity)
 
     suspend fun registerDevice(deviceName: String): Result<ServerConfig> {
         return withContext(Dispatchers.IO) {
@@ -193,11 +194,19 @@ class VpnManager @Inject constructor(private val context: Context) {
             .build()
     }
 
-    suspend fun toggleTunnel(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Result<Tunnel.State> {
+    /**
+     * Explicitly connect the VPN tunnel. This is NOT a toggle — calling this
+     * when already connected is a safe no-op (returns current UP state).
+     *
+     * This approach eliminates the state desync that caused "button glitches"
+     * with the old toggle-based design, where the UI thought the tunnel was
+     * in one state but the backend was in another.
+     */
+    suspend fun connect(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Result<Tunnel.State> {
         return withContext(Dispatchers.IO) {
             try {
                 val config = buildConfig(killSwitch, dnsProvider)
-                    ?: return@withContext Result.failure(Exception("No config \u2014 register device first"))
+                    ?: return@withContext Result.failure(Exception("No config — register device first"))
 
                 if (currentTunnel == null) {
                     currentTunnel = SovereignTunnel("sovereign-shield")
@@ -205,24 +214,62 @@ class VpnManager @Inject constructor(private val context: Context) {
 
                 val tunnel = currentTunnel!!
 
-                // Determine desired state explicitly instead of using TOGGLE.
-                // TOGGLE can race if called rapidly, causing flicker between UP/DOWN.
+                // Check if already connected — if so, return success immediately
                 val currentState = try { backend.getState(tunnel) } catch (_: Exception) { Tunnel.State.DOWN }
-                val desiredState = if (currentState == Tunnel.State.UP) Tunnel.State.DOWN else Tunnel.State.UP
+                if (currentState == Tunnel.State.UP) {
+                    return@withContext Result.success(Tunnel.State.UP)
+                }
 
-                val newState = backend.setState(tunnel, desiredState, config)
+                val newState = backend.setState(tunnel, Tunnel.State.UP, config)
 
                 if (newState == Tunnel.State.UP) {
                     connectionStartTime = System.currentTimeMillis()
                     encryptedPrefs.incrementConnectionCount()
-                } else {
-                    connectionStartTime = 0L
                 }
 
                 Result.success(newState)
             } catch (e: Exception) {
                 Result.failure(e)
             }
+        }
+    }
+
+    /**
+     * Explicitly disconnect the VPN tunnel. Safe to call when already disconnected.
+     */
+    suspend fun disconnect(): Result<Tunnel.State> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val tunnel = currentTunnel
+                    ?: return@withContext Result.success(Tunnel.State.DOWN)
+
+                val currentState = try { backend.getState(tunnel) } catch (_: Exception) { Tunnel.State.DOWN }
+                if (currentState == Tunnel.State.DOWN) {
+                    connectionStartTime = 0L
+                    return@withContext Result.success(Tunnel.State.DOWN)
+                }
+
+                val newState = backend.setState(tunnel, Tunnel.State.DOWN, null)
+                connectionStartTime = 0L
+                Result.success(newState)
+            } catch (e: Exception) {
+                connectionStartTime = 0L
+                Result.failure(e)
+            }
+        }
+    }
+
+    /**
+     * Backwards-compatible toggle that delegates to connect/disconnect
+     * based on desired direction. Uses the UI-provided state to decide
+     * direction, NOT the backend state — preventing desync glitches.
+     */
+    suspend fun toggleTunnel(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Result<Tunnel.State> {
+        val currentState = getTunnelState()
+        return if (currentState == Tunnel.State.UP) {
+            disconnect()
+        } else {
+            connect(killSwitch, dnsProvider)
         }
     }
 

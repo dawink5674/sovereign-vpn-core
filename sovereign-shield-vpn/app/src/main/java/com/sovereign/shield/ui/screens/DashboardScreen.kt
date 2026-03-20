@@ -28,6 +28,7 @@ import com.sovereign.shield.ui.theme.*
 import com.sovereign.shield.vpn.NetworkMonitor
 import com.sovereign.shield.vpn.VpnManager
 import com.sovereign.shield.vpn.VpnSettings
+import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -174,7 +175,7 @@ fun DashboardScreen(
         if (autoConnect && isRegistered && vpnState == Tunnel.State.DOWN && !isActionInProgress) {
             delay(500) // Brief delay to let UI settle
             statusMessage = "Auto-connecting..."
-            val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
+            val result = vpnManager.connect(killSwitch, dnsProvider)
             if (result.isSuccess) {
                 val newState = result.getOrNull() ?: Tunnel.State.DOWN
                 vpnState = newState
@@ -199,7 +200,7 @@ fun DashboardScreen(
                     statusMessage = "Reconnecting..."
                     isActionInProgress = true
                     try {
-                        val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
+                        val result = vpnManager.connect(killSwitch, dnsProvider)
                         if (result.isSuccess) {
                             val newState = result.getOrNull() ?: Tunnel.State.DOWN
                             vpnState = newState
@@ -220,25 +221,55 @@ fun DashboardScreen(
         }
     }
 
-    fun doToggle() {
+    // Explicit connect — always brings tunnel UP
+    fun doConnect() {
         scope.launch {
-            if (!toggleMutex.tryLock()) return@launch  // Already in progress, ignore tap
+            if (!toggleMutex.tryLock()) return@launch
             try {
                 isActionInProgress = true
                 statusMessage = "Securing..."
-                networkMonitor.addLog("Initiating tunnel...", NetworkMonitor.LogType.INFO)
-                val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
+                networkMonitor.addLog("Connecting tunnel...", NetworkMonitor.LogType.INFO)
+                val result = vpnManager.connect(killSwitch, dnsProvider)
                 if (result.isSuccess) {
                     val newState = result.getOrNull() ?: Tunnel.State.DOWN
                     vpnState = newState
-                    statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Disconnected"
+                    statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Connection failed"
                     networkMonitor.addLog("Tunnel state: $newState", NetworkMonitor.LogType.INFO)
                     sendStateNotification(newState == Tunnel.State.UP)
                     if (newState == Tunnel.State.UP) {
                         vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
-                    } else {
-                        networkMonitor.stopMonitoring()
                     }
+                } else {
+                    vpnState = vpnManager.getTunnelState()
+                    statusMessage = "Error: ${result.exceptionOrNull()?.message}"
+                    networkMonitor.addLog("ERROR: ${result.exceptionOrNull()?.message}", NetworkMonitor.LogType.ERROR)
+                }
+            } catch (e: Exception) {
+                vpnState = vpnManager.getTunnelState()
+                statusMessage = "Error: ${e.message}"
+            } finally {
+                isActionInProgress = false
+                toggleMutex.unlock()
+            }
+        }
+    }
+
+    // Explicit disconnect — always brings tunnel DOWN
+    fun doDisconnect() {
+        scope.launch {
+            if (!toggleMutex.tryLock()) return@launch
+            try {
+                isActionInProgress = true
+                statusMessage = "Disconnecting..."
+                networkMonitor.addLog("Disconnecting tunnel...", NetworkMonitor.LogType.INFO)
+                val result = vpnManager.disconnect()
+                if (result.isSuccess) {
+                    val newState = result.getOrNull() ?: Tunnel.State.DOWN
+                    vpnState = newState
+                    statusMessage = "Disconnected"
+                    networkMonitor.addLog("Tunnel state: $newState", NetworkMonitor.LogType.INFO)
+                    sendStateNotification(false)
+                    networkMonitor.stopMonitoring()
                 } else {
                     vpnState = vpnManager.getTunnelState()
                     statusMessage = "Error: ${result.exceptionOrNull()?.message}"
@@ -256,22 +287,30 @@ fun DashboardScreen(
 
     val handleConnect: () -> Unit = {
         if (!isActionInProgress) {
-            try {
-                val activity = context.findActivity()
-                if (activity != null) {
-                    val prepareIntent = vpnManager.prepareVpn(activity)
-                    if (prepareIntent != null) {
-                        statusMessage = "Requesting permission..."
-                        onRequestVpnPermission?.invoke(prepareIntent) { granted ->
-                            if (granted) doToggle()
-                            else {
-                                statusMessage = "VPN permission denied"
-                                isActionInProgress = false
+            if (isConnected) {
+                // Already connected — disconnect
+                doDisconnect()
+            } else {
+                // Not connected — need to connect
+                try {
+                    val activity = context.findActivity()
+                    if (activity != null) {
+                        // Use GoBackend.VpnService.prepare() so the OS binds to
+                        // the correct VPN service class (GoBackend's, not a custom one).
+                        val prepareIntent = GoBackend.VpnService.prepare(activity)
+                        if (prepareIntent != null) {
+                            statusMessage = "Requesting permission..."
+                            onRequestVpnPermission?.invoke(prepareIntent) { granted ->
+                                if (granted) doConnect()
+                                else {
+                                    statusMessage = "VPN permission denied"
+                                    isActionInProgress = false
+                                }
                             }
-                        }
-                    } else doToggle()
-                } else statusMessage = "Error: no activity context"
-            } catch (e: Exception) { statusMessage = "Error: ${e.message}" }
+                        } else doConnect()
+                    } else statusMessage = "Error: no activity context"
+                } catch (e: Exception) { statusMessage = "Error: ${e.message}" }
+            }
         }
     }
 

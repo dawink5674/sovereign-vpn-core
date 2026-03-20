@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network access for API calls and VPN tunnel -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -35,12 +36,18 @@
             </intent-filter>
         </activity>
 
-        <!-- WireGuard VPN Service -->
+        <!--
+            Override the WireGuard tunnel library's GoBackend$VpnService declaration
+            to add foregroundServiceType required on Android 14+ (API 34+).
+            The library declares this service in its own AAR manifest, but without
+            foregroundServiceType. We use tools:node="merge" to add our attribute.
+        -->
         <service
-            android:name=".vpn.SovereignVpnService"
+            android:name="com.wireguard.android.backend.GoBackend$VpnService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
-            android:permission="android.permission.BIND_VPN_SERVICE">
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            tools:node="merge">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
