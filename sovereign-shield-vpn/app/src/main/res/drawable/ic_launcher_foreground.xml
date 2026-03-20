@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer shield shape -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M54,20L26,32v20c0,18 11.9,34.8 28,38.8C70.1,86.8 82,70 82,52V32L54,20z"/>
+    <!-- Inner shield gradient layer -->
+    <path
+        android:fillColor="#3F51B5"
+        android:pathData="M54,25L31,35.5v17.5c0,15.5 10.2,30 23,33.5 12.8,-3.5 23,-18 23,-33.5V35.5L54,25z"/>
+    <!-- Shield emblem - stylized S -->
+    <path
+        android:fillColor="#E8EAF6"
+        android:pathData="M62,42c0,-4.4-3.6,-8,-8,-8s-8,3.6,-8,8c0,3.2,1.9,6,4.6,7.3L44,58c0,4.4,3.6,8,8,8h4c4.4,0,8,-3.6,8,-8v-3c0,-2.2-1.8,-4,-4,-4h-2v4h2v3c0,2.2-1.8,4,-4,4h-4c-2.2,0,-4,-1.8,-4,-4l7.3,-9.4C58.5,47.2,62,44.9,62,42zM50,42c0,-2.2,1.8,-4,4,-4s4,1.8,4,4-1.8,4,-4,4S50,44.2,50,42z"/>
+    <!-- Lock keyhole -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,46m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0"/>
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M53,47h2v4h-2z"/>
+</vector>
