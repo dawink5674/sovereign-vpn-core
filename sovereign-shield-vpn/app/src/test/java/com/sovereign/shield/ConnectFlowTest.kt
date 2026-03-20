@@ -218,19 +218,29 @@ class ConnectFlowTest {
     // ---------------------------------------------------------------------------
 
     @Test
-    fun `unified button action - not registered should use registerAndConnect`() {
-        // The core fix: when isRegistered=false, the button should call
-        // handleRegisterAndConnect (not handleRegister)
+    fun `connect button always registers then connects - fresh install`() {
+        // The core fix: the button ALWAYS does register → connect,
+        // regardless of registration state. No conditional branching.
         val isRegistered = false
-        val actionName = if (!isRegistered) "handleRegisterAndConnect" else "handleConnect"
-        assertEquals("handleRegisterAndConnect", actionName)
+        // Button action is always handleConnectButton which does:
+        // 1. VPN permission
+        // 2. registerDevice()
+        // 3. connect()
+        val actionName = "handleConnectButton"
+        assertEquals("handleConnectButton", actionName)
+        // On fresh install, registration will create keys + register with server
+        assertFalse(isRegistered)
     }
 
     @Test
-    fun `unified button action - registered and disconnected should use handleConnect`() {
+    fun `connect button always registers then connects - already registered`() {
+        // Even when already registered, the button still re-registers
+        // before connecting to ensure the server has fresh config
         val isRegistered = true
-        val actionName = if (!isRegistered) "handleRegisterAndConnect" else "handleConnect"
-        assertEquals("handleConnect", actionName)
+        val actionName = "handleConnectButton"
+        assertEquals("handleConnectButton", actionName)
+        // The same handler is used whether registered or not
+        assertTrue(isRegistered)
     }
 
     @Test

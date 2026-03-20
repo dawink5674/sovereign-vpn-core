@@ -175,6 +175,12 @@ fun DashboardScreen(
         if (autoConnect && isRegistered && vpnState == Tunnel.State.DOWN && !isActionInProgress) {
             delay(500) // Brief delay to let UI settle
             statusMessage = "Auto-connecting..."
+            // Always re-register before connecting
+            val regResult = vpnManager.registerDevice("Android Device")
+            if (regResult.isFailure) {
+                android.util.Log.w("DashboardScreen", "Auto-connect registration failed: ${regResult.exceptionOrNull()?.message}")
+                // Continue anyway — might still connect with cached config
+            }
             val result = vpnManager.connect(killSwitch, dnsProvider)
             if (result.isSuccess) {
                 val newState = result.getOrNull() ?: Tunnel.State.DOWN
@@ -196,10 +202,15 @@ fun DashboardScreen(
                 val actualState = vpnManager.getTunnelState()
                 if (actualState == Tunnel.State.DOWN && vpnState == Tunnel.State.UP && !isActionInProgress) {
                     // Unexpected drop detected
-                    networkMonitor.addLog("Connection dropped — auto-reconnecting", NetworkMonitor.LogType.NETWORK)
+                    networkMonitor.addLog("Connection dropped — re-registering and reconnecting", NetworkMonitor.LogType.NETWORK)
                     statusMessage = "Reconnecting..."
                     isActionInProgress = true
                     try {
+                        // Re-register before reconnecting
+                        val regResult = vpnManager.registerDevice("Android Device")
+                        if (regResult.isFailure) {
+                            android.util.Log.w("DashboardScreen", "Reconnect registration failed: ${regResult.exceptionOrNull()?.message}")
+                        }
                         val result = vpnManager.connect(killSwitch, dnsProvider)
                         if (result.isSuccess) {
                             val newState = result.getOrNull() ?: Tunnel.State.DOWN
@@ -319,44 +330,47 @@ fun DashboardScreen(
         }
     }
 
-    val handleConnect: () -> Unit = {
+    /**
+     * THE connect button handler. Every tap does the full flow:
+     *
+     *   If disconnected:  VPN permission → register device → connect tunnel
+     *   If connected:     disconnect tunnel
+     *
+     * Registration happens EVERY time you connect so your device is
+     * always freshly registered with the server before the tunnel goes up.
+     * The server handles duplicate registrations gracefully (409 → key rotate → retry).
+     */
+    val handleConnectButton: () -> Unit = {
         if (!isActionInProgress) {
             if (isConnected) {
-                // Already connected — disconnect
+                // Already connected — just disconnect
                 doDisconnect()
             } else {
-                // Not connected — request VPN permission, then connect
-                requestPermissionThenDo { doConnect() }
-            }
-        }
-    }
+                // Not connected — full flow: permission → register → connect
+                requestPermissionThenDo {
+                    scope.launch {
+                        if (!toggleMutex.tryLock()) return@launch
+                        try {
+                            isActionInProgress = true
 
-    /**
-     * Single-tap flow for fresh install:
-     * 1. Request VPN permission (shows the OS popup)
-     * 2. Register the device with the server
-     * 3. Immediately connect the tunnel
-     *
-     * This ensures the user sees the VPN popup on the FIRST tap,
-     * not after a confusing two-step process.
-     */
-    val handleRegisterAndConnect: () -> Unit = {
-        if (!isActionInProgress) {
-            // Step 1: Request VPN permission FIRST — the user sees the popup immediately
-            requestPermissionThenDo {
-                // Step 2: Permission granted — now register and connect
-                scope.launch {
-                    if (!toggleMutex.tryLock()) return@launch
-                    try {
-                        isActionInProgress = true
-                        statusMessage = "Registering device..."
-                        android.util.Log.d("DashboardScreen", "Starting device registration...")
-                        val result = vpnManager.registerDevice("Android Device")
-                        if (result.isSuccess) {
+                            // Step 1: Register device with server
+                            statusMessage = "Registering device..."
+                            android.util.Log.d("DashboardScreen", "Starting device registration...")
+                            val regResult = vpnManager.registerDevice("Android Device")
+                            if (regResult.isFailure) {
+                                val err = regResult.exceptionOrNull()?.message ?: "unknown error"
+                                statusMessage = "Registration failed: $err"
+                                android.util.Log.e("DashboardScreen", "Registration failed: $err")
+                                networkMonitor.addLog("Registration failed: $err", NetworkMonitor.LogType.ERROR)
+                                return@launch
+                            }
+
                             isRegistered = true
-                            statusMessage = "Registered — Connecting..."
-                            android.util.Log.d("DashboardScreen", "Registration successful, connecting tunnel...")
-                            // Step 3: Immediately connect the tunnel
+                            android.util.Log.d("DashboardScreen", "Registration successful")
+
+                            // Step 2: Connect the tunnel
+                            statusMessage = "Connecting..."
+                            android.util.Log.d("DashboardScreen", "Connecting tunnel...")
                             val connectResult = vpnManager.connect(killSwitch, dnsProvider)
                             if (connectResult.isSuccess) {
                                 val newState = connectResult.getOrNull() ?: Tunnel.State.DOWN
@@ -372,20 +386,15 @@ fun DashboardScreen(
                                 val err = connectResult.exceptionOrNull()?.message ?: "unknown"
                                 statusMessage = "Connect failed: $err"
                                 android.util.Log.e("DashboardScreen", "Connect failed: $err")
-                                networkMonitor.addLog("Connect failed after register: $err", NetworkMonitor.LogType.ERROR)
+                                networkMonitor.addLog("Connect failed: $err", NetworkMonitor.LogType.ERROR)
                             }
-                        } else {
-                            val err = result.exceptionOrNull()?.message ?: "unknown error"
-                            statusMessage = "Registration failed: $err"
-                            android.util.Log.e("DashboardScreen", "Registration failed: $err")
-                            networkMonitor.addLog("Registration failed: $err", NetworkMonitor.LogType.ERROR)
+                        } catch (e: Exception) {
+                            statusMessage = "Error: ${e.message}"
+                            android.util.Log.e("DashboardScreen", "Register+connect failed", e)
+                        } finally {
+                            isActionInProgress = false
+                            toggleMutex.unlock()
                         }
-                    } catch (e: Exception) {
-                        statusMessage = "Error: ${e.message}"
-                        android.util.Log.e("DashboardScreen", "Register+connect failed", e)
-                    } finally {
-                        isActionInProgress = false
-                        toggleMutex.unlock()
                     }
                 }
             }
@@ -396,17 +405,14 @@ fun DashboardScreen(
     val windowInfo = currentWindowAdaptiveInfo()
     val isExpanded = windowInfo.windowSizeClass.windowWidthSizeClass == WindowWidthSizeClass.EXPANDED
 
-    // The button now uses a SINGLE handler that does the right thing
-    // regardless of registration state:
-    // - Not registered: VPN popup → register → connect (all in one tap)
-    // - Registered + disconnected: VPN popup → connect
-    // - Registered + connected: disconnect
-    val unifiedButtonAction = if (!isRegistered) handleRegisterAndConnect else handleConnect
+    // Every connect tap does: VPN permission → register → connect
+    // Every disconnect tap does: disconnect
+    // No conditional — registration always happens before connecting.
 
     if (isExpanded) {
         ExpandedDashboard(
             vpnState = vpnState, statusMessage = statusMessage, isRegistered = isRegistered,
-            isConnecting = isConnecting, onToggle = unifiedButtonAction,
+            isConnecting = isConnecting, onToggle = handleConnectButton,
             rxBytes = rxBytes, txBytes = txBytes, rxRate = rxRate, txRate = txRate,
             networkType = networkType, lastHandshake = lastHandshake,
             rxSpeedHistory = rxSpeedHistory, txSpeedHistory = txSpeedHistory,
@@ -416,7 +422,7 @@ fun DashboardScreen(
     } else {
         FoldedDashboard(
             vpnState = vpnState, statusMessage = statusMessage, isRegistered = isRegistered,
-            isConnecting = isConnecting, onToggle = unifiedButtonAction,
+            isConnecting = isConnecting, onToggle = handleConnectButton,
             rxBytes = rxBytes, txBytes = txBytes, rxRate = rxRate, txRate = txRate,
             networkType = networkType, lastHandshake = lastHandshake,
             rxSpeedHistory = rxSpeedHistory, txSpeedHistory = txSpeedHistory,
