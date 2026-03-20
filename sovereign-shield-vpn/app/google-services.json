@@ -9,7 +9,26 @@
       "client_info": {
         "mobilesdk_app_id": "1:754897180469:android:eb0ea8fb6e9387c3499e7c",
         "android_client_info": {
-          "package_name": "com.sovereign.dragonscale"
+          "package_name": "com.sovereign.shield"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkiLoVAPXm_V-wzLQLSsEBuJym9rk9LFM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:754897180469:android:debug_variant",
+        "android_client_info": {
+          "package_name": "com.sovereign.shield.debug"
         }
       },
       "oauth_client": [],

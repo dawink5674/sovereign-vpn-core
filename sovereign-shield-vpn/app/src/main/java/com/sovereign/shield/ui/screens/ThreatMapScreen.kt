@@ -247,10 +247,9 @@ private fun GlobalMapCanvas(
             pathMeasure.setPath(arcPath, false)
             val length = pathMeasure.length
             if (length > 0) {
-                val pos = FloatArray(2)
-                pathMeasure.getPosition(length * arcProgress, pos)
-                drawCircle(ShieldBlueBright, 4f, Offset(pos[0], pos[1]))
-                drawCircle(ShieldBlue.copy(alpha = 0.3f), 10f, Offset(pos[0], pos[1]))
+                val pulsePos = pathMeasure.getPosition(length * arcProgress)
+                drawCircle(ShieldBlueBright, 4f, pulsePos)
+                drawCircle(ShieldBlue.copy(alpha = 0.3f), 10f, pulsePos)
             }
 
             // Server pin

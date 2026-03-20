@@ -12,6 +12,15 @@ android {
     namespace = "com.sovereign.shield"
     compileSdk = 35
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("sovereign-shield.jks")
+            storePassword = "SovereignShield2024"
+            keyAlias = "sovereign-shield"
+            keyPassword = "SovereignShield2024"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.sovereign.shield"
         minSdk = 28
@@ -29,6 +38,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

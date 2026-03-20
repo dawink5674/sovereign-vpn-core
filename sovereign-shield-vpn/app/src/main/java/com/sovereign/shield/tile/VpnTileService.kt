@@ -1,5 +1,6 @@
 package com.sovereign.shield.tile
 
+import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.sovereign.shield.vpn.VpnManager
@@ -23,7 +24,9 @@ class VpnTileService : TileService() {
 
         qsTile?.apply {
             state = if (isUp) Tile.STATE_INACTIVE else Tile.STATE_ACTIVE
-            subtitle = if (isUp) "Disconnecting..." else "Connecting..."
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                subtitle = if (isUp) "Disconnecting..." else "Connecting..."
+            }
             updateTile()
         }
 
@@ -37,7 +40,9 @@ class VpnTileService : TileService() {
 
         qsTile?.apply {
             state = if (isUp) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-            subtitle = if (isUp) "Protected" else "Tap to connect"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                subtitle = if (isUp) "Protected" else "Tap to connect"
+            }
             updateTile()
         }
     }

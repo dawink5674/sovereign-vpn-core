@@ -25,3 +25,9 @@
 
 # DataStore
 -keep class androidx.datastore.** { *; }
+
+# Suppress R8 warnings for missing error-prone annotations (used by Tink/security-crypto)
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
+-dontwarn com.google.errorprone.annotations.CheckReturnValue
+-dontwarn com.google.errorprone.annotations.Immutable
+-dontwarn com.google.errorprone.annotations.RestrictedApi
