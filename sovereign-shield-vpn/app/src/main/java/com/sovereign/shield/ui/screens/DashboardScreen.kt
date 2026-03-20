@@ -285,52 +285,108 @@ fun DashboardScreen(
         }
     }
 
+    /**
+     * Request VPN permission via the OS dialog, then invoke onGranted.
+     * This is the ONLY path that shows the VPN popup to the user.
+     */
+    fun requestPermissionThenDo(onGranted: () -> Unit) {
+        try {
+            val activity = context.findActivity()
+            if (activity != null) {
+                val prepareIntent = GoBackend.VpnService.prepare(activity)
+                if (prepareIntent != null) {
+                    statusMessage = "Requesting VPN permission..."
+                    onRequestVpnPermission?.invoke(prepareIntent) { granted ->
+                        if (granted) {
+                            onGranted()
+                        } else {
+                            statusMessage = "VPN permission denied"
+                            isActionInProgress = false
+                        }
+                    }
+                } else {
+                    // Permission already granted — proceed immediately
+                    onGranted()
+                }
+            } else {
+                statusMessage = "Error: no activity context"
+                isActionInProgress = false
+            }
+        } catch (e: Exception) {
+            statusMessage = "Error: ${e.message}"
+            isActionInProgress = false
+            android.util.Log.e("DashboardScreen", "VPN permission request failed", e)
+        }
+    }
+
     val handleConnect: () -> Unit = {
         if (!isActionInProgress) {
             if (isConnected) {
                 // Already connected — disconnect
                 doDisconnect()
             } else {
-                // Not connected — need to connect
-                try {
-                    val activity = context.findActivity()
-                    if (activity != null) {
-                        // Use GoBackend.VpnService.prepare() so the OS binds to
-                        // the correct VPN service class (GoBackend's, not a custom one).
-                        val prepareIntent = GoBackend.VpnService.prepare(activity)
-                        if (prepareIntent != null) {
-                            statusMessage = "Requesting permission..."
-                            onRequestVpnPermission?.invoke(prepareIntent) { granted ->
-                                if (granted) doConnect()
-                                else {
-                                    statusMessage = "VPN permission denied"
-                                    isActionInProgress = false
-                                }
-                            }
-                        } else doConnect()
-                    } else statusMessage = "Error: no activity context"
-                } catch (e: Exception) { statusMessage = "Error: ${e.message}" }
+                // Not connected — request VPN permission, then connect
+                requestPermissionThenDo { doConnect() }
             }
         }
     }
 
-    val handleRegister: () -> Unit = {
+    /**
+     * Single-tap flow for fresh install:
+     * 1. Request VPN permission (shows the OS popup)
+     * 2. Register the device with the server
+     * 3. Immediately connect the tunnel
+     *
+     * This ensures the user sees the VPN popup on the FIRST tap,
+     * not after a confusing two-step process.
+     */
+    val handleRegisterAndConnect: () -> Unit = {
         if (!isActionInProgress) {
-            scope.launch {
-                if (!toggleMutex.tryLock()) return@launch
-                try {
-                    isActionInProgress = true
-                    statusMessage = "Registering..."
-                    val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
-                    if (result.isSuccess) {
-                        isRegistered = true
-                        statusMessage = "Registered — Ready"
-                    } else {
-                        statusMessage = "Registration failed: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+            // Step 1: Request VPN permission FIRST — the user sees the popup immediately
+            requestPermissionThenDo {
+                // Step 2: Permission granted — now register and connect
+                scope.launch {
+                    if (!toggleMutex.tryLock()) return@launch
+                    try {
+                        isActionInProgress = true
+                        statusMessage = "Registering device..."
+                        android.util.Log.d("DashboardScreen", "Starting device registration...")
+                        val result = vpnManager.registerDevice("Android Device")
+                        if (result.isSuccess) {
+                            isRegistered = true
+                            statusMessage = "Registered — Connecting..."
+                            android.util.Log.d("DashboardScreen", "Registration successful, connecting tunnel...")
+                            // Step 3: Immediately connect the tunnel
+                            val connectResult = vpnManager.connect(killSwitch, dnsProvider)
+                            if (connectResult.isSuccess) {
+                                val newState = connectResult.getOrNull() ?: Tunnel.State.DOWN
+                                vpnState = newState
+                                statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Connection failed"
+                                android.util.Log.d("DashboardScreen", "Tunnel state: $newState")
+                                sendStateNotification(newState == Tunnel.State.UP)
+                                if (newState == Tunnel.State.UP) {
+                                    vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+                                }
+                            } else {
+                                vpnState = vpnManager.getTunnelState()
+                                val err = connectResult.exceptionOrNull()?.message ?: "unknown"
+                                statusMessage = "Connect failed: $err"
+                                android.util.Log.e("DashboardScreen", "Connect failed: $err")
+                                networkMonitor.addLog("Connect failed after register: $err", NetworkMonitor.LogType.ERROR)
+                            }
+                        } else {
+                            val err = result.exceptionOrNull()?.message ?: "unknown error"
+                            statusMessage = "Registration failed: $err"
+                            android.util.Log.e("DashboardScreen", "Registration failed: $err")
+                            networkMonitor.addLog("Registration failed: $err", NetworkMonitor.LogType.ERROR)
+                        }
+                    } catch (e: Exception) {
+                        statusMessage = "Error: ${e.message}"
+                        android.util.Log.e("DashboardScreen", "Register+connect failed", e)
+                    } finally {
+                        isActionInProgress = false
+                        toggleMutex.unlock()
                     }
-                } finally {
-                    isActionInProgress = false
-                    toggleMutex.unlock()
                 }
             }
         }
@@ -340,10 +396,17 @@ fun DashboardScreen(
     val windowInfo = currentWindowAdaptiveInfo()
     val isExpanded = windowInfo.windowSizeClass.windowWidthSizeClass == WindowWidthSizeClass.EXPANDED
 
+    // The button now uses a SINGLE handler that does the right thing
+    // regardless of registration state:
+    // - Not registered: VPN popup → register → connect (all in one tap)
+    // - Registered + disconnected: VPN popup → connect
+    // - Registered + connected: disconnect
+    val unifiedButtonAction = if (!isRegistered) handleRegisterAndConnect else handleConnect
+
     if (isExpanded) {
         ExpandedDashboard(
             vpnState = vpnState, statusMessage = statusMessage, isRegistered = isRegistered,
-            isConnecting = isConnecting, onRegister = handleRegister, onToggle = handleConnect,
+            isConnecting = isConnecting, onToggle = unifiedButtonAction,
             rxBytes = rxBytes, txBytes = txBytes, rxRate = rxRate, txRate = txRate,
             networkType = networkType, lastHandshake = lastHandshake,
             rxSpeedHistory = rxSpeedHistory, txSpeedHistory = txSpeedHistory,
@@ -353,7 +416,7 @@ fun DashboardScreen(
     } else {
         FoldedDashboard(
             vpnState = vpnState, statusMessage = statusMessage, isRegistered = isRegistered,
-            isConnecting = isConnecting, onRegister = handleRegister, onToggle = handleConnect,
+            isConnecting = isConnecting, onToggle = unifiedButtonAction,
             rxBytes = rxBytes, txBytes = txBytes, rxRate = rxRate, txRate = txRate,
             networkType = networkType, lastHandshake = lastHandshake,
             rxSpeedHistory = rxSpeedHistory, txSpeedHistory = txSpeedHistory,
@@ -369,7 +432,7 @@ fun DashboardScreen(
 @Composable
 private fun ExpandedDashboard(
     vpnState: Tunnel.State, statusMessage: String, isRegistered: Boolean,
-    isConnecting: Boolean, onRegister: () -> Unit, onToggle: () -> Unit,
+    isConnecting: Boolean, onToggle: () -> Unit,
     rxBytes: Long, txBytes: Long, rxRate: String, txRate: String,
     networkType: String, lastHandshake: String,
     rxSpeedHistory: List<Float>, txSpeedHistory: List<Float>,
@@ -398,7 +461,7 @@ private fun ExpandedDashboard(
             ConnectionPanel(
                 isConnected = isConnected, isConnecting = isConnecting,
                 isRegistered = isRegistered, statusMessage = statusMessage,
-                onRegister = onRegister, onToggle = onToggle,
+                onToggle = onToggle,
                 networkType = networkType, lastHandshake = lastHandshake,
                 connectionDuration = connectionDuration
             )
@@ -424,7 +487,7 @@ private fun ExpandedDashboard(
 @Composable
 private fun FoldedDashboard(
     vpnState: Tunnel.State, statusMessage: String, isRegistered: Boolean,
-    isConnecting: Boolean, onRegister: () -> Unit, onToggle: () -> Unit,
+    isConnecting: Boolean, onToggle: () -> Unit,
     rxBytes: Long, txBytes: Long, rxRate: String, txRate: String,
     networkType: String, lastHandshake: String,
     rxSpeedHistory: List<Float>, txSpeedHistory: List<Float>,
@@ -459,7 +522,7 @@ private fun FoldedDashboard(
         ConnectionPanel(
             isConnected = isConnected, isConnecting = isConnecting,
             isRegistered = isRegistered, statusMessage = statusMessage,
-            onRegister = onRegister, onToggle = onToggle,
+            onToggle = onToggle,
             networkType = networkType, lastHandshake = lastHandshake,
             connectionDuration = connectionDuration
         )
@@ -478,7 +541,7 @@ private fun FoldedDashboard(
 @Composable
 private fun ConnectionPanel(
     isConnected: Boolean, isConnecting: Boolean, isRegistered: Boolean,
-    statusMessage: String, onRegister: () -> Unit, onToggle: () -> Unit,
+    statusMessage: String, onToggle: () -> Unit,
     networkType: String, lastHandshake: String, connectionDuration: Long
 ) {
     Column(
@@ -488,21 +551,25 @@ private fun ConnectionPanel(
         // Status badge
         ConnectionStatusBadge(isConnected = isConnected, isConnecting = isConnecting)
 
-        // Main connect button
+        // Main connect button — single unified action for ALL states
         ShieldConnectButton(
             isConnected = isConnected,
             isConnecting = isConnecting,
-            onClick = if (!isRegistered) onRegister else onToggle
+            onClick = onToggle
         )
 
-        // Button label
-        if (!isRegistered) {
-            Text(
-                "TAP TO REGISTER DEVICE",
-                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 2.sp),
-                color = TextMuted
-            )
-        }
+        // Status message shown below the button
+        Text(
+            statusMessage,
+            style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
+            color = when {
+                statusMessage.startsWith("Error") || statusMessage.startsWith("Registration failed") ||
+                statusMessage.startsWith("Connect failed") || statusMessage.startsWith("VPN permission denied") -> StatusDisconnected
+                isConnected -> StatusConnected
+                statusMessage.contains("...") -> StatusConnecting
+                else -> TextMuted
+            }
+        )
 
         // Encryption badge
         EncryptionBadge()

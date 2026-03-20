@@ -38,7 +38,13 @@ class VpnManager @Inject constructor(private val context: Context) {
 
     private val encryptedPrefs = EncryptedPrefs(context)
     private val cryptoManager = CryptoManager(encryptedPrefs)
-    private val backend: GoBackend get() = SovereignShieldApp.get(context).backend
+    private val backend: GoBackend get() {
+        val app = SovereignShieldApp.get(context)
+        if (app.backendInitError != null) {
+            android.util.Log.e("VpnManager", "GoBackend has init error: ${app.backendInitError}")
+        }
+        return app.backend
+    }
 
     // Connection timing
     private var connectionStartTime: Long = 0L
@@ -69,16 +75,22 @@ class VpnManager @Inject constructor(private val context: Context) {
     suspend fun registerDevice(deviceName: String): Result<ServerConfig> {
         return withContext(Dispatchers.IO) {
             try {
+                android.util.Log.d("VpnManager", "registerDevice() called for: $deviceName")
                 val result = attemptRegistration(deviceName)
                 if (result.isFailure) {
                     val msg = result.exceptionOrNull()?.message ?: ""
+                    android.util.Log.w("VpnManager", "Registration attempt failed: $msg")
                     if (msg.contains("409")) {
+                        android.util.Log.d("VpnManager", "409 conflict — rotating keys and retrying")
                         cryptoManager.clearKeys()
                         return@withContext attemptRegistration(deviceName)
                     }
+                } else {
+                    android.util.Log.d("VpnManager", "Registration successful")
                 }
                 result
             } catch (e: Exception) {
+                android.util.Log.e("VpnManager", "registerDevice() exception", e)
                 Result.failure(e)
             }
         }
@@ -205,8 +217,22 @@ class VpnManager @Inject constructor(private val context: Context) {
     suspend fun connect(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Result<Tunnel.State> {
         return withContext(Dispatchers.IO) {
             try {
+                android.util.Log.d("VpnManager", "connect() called — building config...")
+
+                // Check for backend init errors first
+                val app = SovereignShieldApp.get(context)
+                if (app.backendInitError != null) {
+                    return@withContext Result.failure(
+                        Exception("VPN backend error: ${app.backendInitError}")
+                    )
+                }
+
                 val config = buildConfig(killSwitch, dnsProvider)
-                    ?: return@withContext Result.failure(Exception("No config — register device first"))
+                if (config == null) {
+                    android.util.Log.e("VpnManager", "buildConfig returned null — missing registration data")
+                    return@withContext Result.failure(Exception("No config — register device first"))
+                }
+                android.util.Log.d("VpnManager", "Config built successfully")
 
                 if (currentTunnel == null) {
                     currentTunnel = SovereignTunnel("sovereign-shield")
@@ -217,10 +243,13 @@ class VpnManager @Inject constructor(private val context: Context) {
                 // Check if already connected — if so, return success immediately
                 val currentState = try { backend.getState(tunnel) } catch (_: Exception) { Tunnel.State.DOWN }
                 if (currentState == Tunnel.State.UP) {
+                    android.util.Log.d("VpnManager", "Already connected — returning UP")
                     return@withContext Result.success(Tunnel.State.UP)
                 }
 
+                android.util.Log.d("VpnManager", "Calling backend.setState(UP)...")
                 val newState = backend.setState(tunnel, Tunnel.State.UP, config)
+                android.util.Log.d("VpnManager", "backend.setState returned: $newState")
 
                 if (newState == Tunnel.State.UP) {
                     connectionStartTime = System.currentTimeMillis()
@@ -229,6 +258,7 @@ class VpnManager @Inject constructor(private val context: Context) {
 
                 Result.success(newState)
             } catch (e: Exception) {
+                android.util.Log.e("VpnManager", "connect() failed", e)
                 Result.failure(e)
             }
         }
