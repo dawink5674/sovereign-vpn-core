@@ -43,17 +43,48 @@ fun ThreatMapScreen() {
     var userLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
     var serverLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
 
+    // Re-poll connection state every 2 seconds so globe reacts to connect/disconnect
+    var liveConnected by remember { mutableStateOf(isConnected) }
     LaunchedEffect(Unit) {
-        val loc = GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
-        if (!loc.error) userLoc = loc
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            val newState = vpnManager.getTunnelState() == Tunnel.State.UP
+            if (newState != liveConnected) liveConnected = newState
+        }
     }
 
-    LaunchedEffect(isConnected, serverIp) {
-        if (isConnected) {
-            kotlinx.coroutines.delay(2000)
-            val loc = GeoIpClient.lookupWithFallback(serverIp)
-            if (loc.latitude != 0.0) serverLoc = loc
-        } else serverLoc = null
+    // Fetch user location — try bypass-VPN method first, then cache, then direct
+    LaunchedEffect(Unit) {
+        // Try the VPN-bypass method which uses the physical network
+        val bypassLoc = try {
+            GeoIpClient.lookupSelfBypassVpn(context, serverIp)
+        } catch (_: Exception) { null }
+        if (bypassLoc != null && !bypassLoc.error && bypassLoc.latitude != 0.0) {
+            userLoc = bypassLoc
+            return@LaunchedEffect
+        }
+        // Fallback: try normal fetch+cache (works when VPN is off)
+        val cached = try {
+            GeoIpClient.fetchAndCacheRealLocation(context, serverIp)
+        } catch (_: Exception) { null }
+        if (cached != null && !cached.error && cached.latitude != 0.0) {
+            userLoc = cached
+        }
+    }
+
+    // Fetch server location — known IP, no VPN bypass needed
+    LaunchedEffect(liveConnected, serverIp) {
+        // Always resolve the server IP so pin shows when connected
+        if (liveConnected) {
+            // Small delay to let connection stabilize
+            kotlinx.coroutines.delay(500)
+            val loc = try {
+                GeoIpClient.lookupWithFallback(serverIp)
+            } catch (_: Exception) { null }
+            if (loc != null && loc.latitude != 0.0) serverLoc = loc
+        } else {
+            serverLoc = null
+        }
     }
 
     Column(
@@ -77,7 +108,7 @@ fun ThreatMapScreen() {
                 ),
                 color = ShieldBlue
             )
-            if (isConnected && userLoc != null) {
+            if (liveConnected && userLoc != null) {
                 Text(
                     "${userLoc?.ip} \u27A4 $serverIp",
                     style = MaterialTheme.typography.bodySmall.copy(
@@ -95,18 +126,25 @@ fun ThreatMapScreen() {
             colors = CardDefaults.cardColors(containerColor = Color(0xFF040810))
         ) {
             Box(Modifier.fillMaxSize()) {
-                Globe3DCanvas(userLoc, serverLoc, isConnected)
+                Globe3DCanvas(userLoc, serverLoc, liveConnected)
 
-                // Connection info overlays
-                if (isConnected && userLoc != null && serverLoc != null) {
+                // Location badges — always show user location if available
+                val uLoc = userLoc
+                val sLoc = serverLoc
+                if (uLoc != null && !uLoc.error) {
                     Column(
                         Modifier.align(Alignment.BottomStart).padding(12.dp)
                     ) {
-                        LocationBadge("YOU", "${userLoc!!.city}, ${userLoc!!.region}", ShieldCyan)
-                        Spacer(Modifier.height(4.dp))
-                        LocationBadge("VPN", "${serverLoc!!.city}, ${serverLoc!!.region}", StatusConnected)
+                        LocationBadge("YOU", "${uLoc.city}, ${uLoc.region}", ShieldCyan)
+                        if (liveConnected && sLoc != null) {
+                            Spacer(Modifier.height(4.dp))
+                            LocationBadge("VPN", "${sLoc.city}, ${sLoc.region}", StatusConnected)
+                        }
                     }
+                }
 
+                // Encrypted tunnel badge — only when connected
+                if (liveConnected && serverLoc != null) {
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(12.dp)
                             .background(Color(0xDD040810), RoundedCornerShape(8.dp))
@@ -122,27 +160,28 @@ fun ThreatMapScreen() {
                     }
                 }
 
-                if (!isConnected) {
-                    Box(
-                        Modifier.fillMaxSize().background(Color(0x60040810)),
-                        contentAlignment = Alignment.Center
+                if (!liveConnected) {
+                    // Light overlay at bottom only — keep globe visible
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
+                            .background(Color(0xCC040810), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("\uD83D\uDEE1\uFE0F", fontSize = 48.sp)
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "CONNECT TO ACTIVATE MAP",
-                                style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 2.sp),
-                                color = TextMuted
-                            )
-                        }
+                        Text(
+                            "CONNECT TO ACTIVATE TUNNEL",
+                            style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 2.sp),
+                            color = TextMuted
+                        )
                     }
                 }
             }
         }
 
-        // Connection details
-        if (isConnected && userLoc != null && serverLoc != null) {
+        // Connection details — show encryption info when connected
+        if (liveConnected && userLoc != null && serverLoc != null) {
             GlassCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -159,6 +198,37 @@ fun ThreatMapScreen() {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Key Exchange", style = MaterialTheme.typography.labelSmall, color = TextMuted)
                         Text("Curve25519", style = MaterialTheme.typography.titleSmall, color = ShieldCyan)
+                    }
+                }
+            }
+        } else if (!liveConnected) {
+            // Show user location even when disconnected
+            val uLocDisc = userLoc
+            if (uLocDisc != null && !uLocDisc.error) {
+                GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Your Location", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                            Text(
+                                "${uLocDisc.city}, ${uLocDisc.region}",
+                                style = MaterialTheme.typography.titleSmall, color = ShieldCyan
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Your IP", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                            Text(
+                                uLocDisc.ip.ifEmpty { "—" },
+                                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                                color = ShieldBlue
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Status", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                            Text("Exposed", style = MaterialTheme.typography.titleSmall, color = Color(0xFFF59E0B))
+                        }
                     }
                 }
             }

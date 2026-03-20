@@ -10,14 +10,21 @@
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
 -keepattributes *Annotation*
+-keepattributes Exceptions
 
 # ---- Retrofit 2 ----
-# Keep generic signature of Call, Response (R8 full mode strips signatures)
--keep,allowobfuscation,allowshrinking interface retrofit2.Call
--keep,allowobfuscation,allowshrinking class retrofit2.Response
+# Keep generic signature of Call, Response — NO obfuscation/shrinking
+-keep class retrofit2.Call { *; }
+-keep class retrofit2.Response { *; }
+-keep class retrofit2.** { *; }
 
 # Suspend functions are wrapped in continuations where the type argument is used
--keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+-keep class kotlin.coroutines.Continuation { *; }
+
+# Keep ALL Retrofit service interfaces and their method signatures
+-keep interface com.sovereign.shield.network.VpnApiService { *; }
+-keep interface com.sovereign.shield.network.GeoIpApi { *; }
+-keep interface com.sovereign.shield.network.IpApiFallbackApi { *; }
 
 # R8 full mode strips generic signatures from return types if not kept
 -if interface * { @retrofit2.http.* public *** *(...); }
@@ -57,9 +64,13 @@
 -keep class * implements com.google.gson.JsonSerializer
 -keep class * implements com.google.gson.JsonDeserializer
 
-# Keep Gson's TypeToken generic signatures
--keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
--keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+# Keep Gson's TypeToken generic signatures (nuclear: no obfuscation or shrinking)
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken { *; }
+
+# Keep ALL Gson internals that handle generic types
+-keep class com.google.gson.internal.** { *; }
+-keep class com.google.gson.stream.** { *; }
 
 # Prevent R8 from leaving Data object members always null
 -keepclassmembers,allowobfuscation class * {
@@ -70,6 +81,15 @@
 # These are deserialized by Gson via reflection. If R8 strips any field name
 # or constructor, deserialization silently produces nulls or crashes.
 -keep class com.sovereign.shield.network.** { *; }
+-keepclassmembers class com.sovereign.shield.network.** { *; }
+
+# Keep the entire app package to prevent any name mangling
+-keep class com.sovereign.shield.** { *; }
+-keepclassmembers class com.sovereign.shield.** {
+    <init>(...);
+    <fields>;
+    <methods>;
+}
 
 # ---- WireGuard tunnel classes ----
 -keep class com.wireguard.** { *; }
