@@ -24,7 +24,7 @@ import com.sovereign.shield.vpn.VpnManager
 fun StatsScreen() {
     val context = LocalContext.current
     val networkMonitor = remember { NetworkMonitor.getInstance(context) }
-    val vpnManager = remember { VpnManager(context) }
+    val vpnManager = remember { VpnManager.getInstance(context) }
     val prefs = remember { EncryptedPrefs(context) }
 
     val rxBytes by networkMonitor.rxBytes.collectAsState()

@@ -19,7 +19,7 @@ class VpnTileService : TileService() {
     override fun onClick() {
         super.onClick()
         // Toggle VPN state
-        val vpnManager = VpnManager(applicationContext)
+        val vpnManager = VpnManager.getInstance(applicationContext)
         val isUp = vpnManager.getTunnelState() == com.wireguard.android.backend.Tunnel.State.UP
 
         qsTile?.apply {
@@ -35,7 +35,7 @@ class VpnTileService : TileService() {
     }
 
     private fun updateTile() {
-        val vpnManager = VpnManager(applicationContext)
+        val vpnManager = VpnManager.getInstance(applicationContext)
         val isUp = vpnManager.getTunnelState() == com.wireguard.android.backend.Tunnel.State.UP
 
         qsTile?.apply {

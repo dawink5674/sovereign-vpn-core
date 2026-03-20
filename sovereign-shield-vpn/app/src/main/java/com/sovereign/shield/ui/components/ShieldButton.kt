@@ -149,6 +149,7 @@ fun ShieldConnectButton(
                     shape = CircleShape
                 )
                 .clickable(
+                    enabled = !isConnecting,
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() }
                 ) { onClick() }

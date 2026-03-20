@@ -47,6 +47,20 @@ class VpnManager @Inject constructor(private val context: Context) {
 
     companion object {
         private var currentTunnel: SovereignTunnel? = null
+
+        @Volatile
+        private var INSTANCE: VpnManager? = null
+
+        /**
+         * Singleton accessor for use in Compose screens.
+         * Ensures the same VpnManager instance is used everywhere,
+         * preventing state desync between button taps.
+         */
+        fun getInstance(context: Context): VpnManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: VpnManager(context.applicationContext).also { INSTANCE = it }
+            }
+        }
     }
 
     fun prepareVpn(activity: Activity): Intent? = VpnService.prepare(activity)
@@ -99,11 +113,10 @@ class VpnManager @Inject constructor(private val context: Context) {
             endpoint = serverConfig.endpoint
         )
 
-        body.clientConfig?.let { conf ->
-            parseConfValue(conf, "PrivateKey")?.let { serverPrivateKey ->
-                encryptedPrefs.storePrivateKey(serverPrivateKey)
-            }
-        }
+        // NOTE: Do NOT override the local private key with anything from clientConfig.
+        // The private key was generated locally by CryptoManager and the matching
+        // public key was sent to the server during registration. Overwriting it
+        // would break the Curve25519 key agreement and the tunnel would fail.
 
         return Result.success(serverConfig)
     }
@@ -125,10 +138,22 @@ class VpnManager @Inject constructor(private val context: Context) {
         return regex.find(conf)?.groupValues?.get(1)?.trim()
     }
 
-    fun buildConfig(killSwitch: Boolean = false): Config? {
-        val privateKey = cryptoManager.getPrivateKey() ?: return null
-        val assignedIP = encryptedPrefs.getAssignedIP() ?: return null
-        val presharedKey = encryptedPrefs.getPresharedKey() ?: return null
+    fun buildConfig(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Config? {
+        val privateKey = cryptoManager.getPrivateKey()
+        if (privateKey == null) {
+            android.util.Log.e("VpnManager", "buildConfig failed: no private key")
+            return null
+        }
+        val assignedIP = encryptedPrefs.getAssignedIP()
+        if (assignedIP == null) {
+            android.util.Log.e("VpnManager", "buildConfig failed: no assigned IP")
+            return null
+        }
+        val presharedKey = encryptedPrefs.getPresharedKey()
+        if (presharedKey == null) {
+            android.util.Log.e("VpnManager", "buildConfig failed: no preshared key")
+            return null
+        }
         val serverPublicKey = encryptedPrefs.getServerPublicKey()
             ?: "G1ReQCSgRG/MdfF5/SMrcnU+lKQMlwkr9aIA7/ZK5WI="
         val serverEndpoint = encryptedPrefs.getServerEndpoint()
@@ -138,13 +163,17 @@ class VpnManager @Inject constructor(private val context: Context) {
             .parsePrivateKey(privateKey)
             .addAddress(InetNetwork.parse(assignedIP))
 
-        // DNS: Use Cloudflare DNS-over-HTTPS compatible resolvers
-        if (killSwitch) {
-            // With kill switch, use only the VPN's DNS
-            interfaceBuilder.addDnsServer(InetAddress.getByName("1.1.1.1"))
-        } else {
-            interfaceBuilder.addDnsServer(InetAddress.getByName("1.1.1.1"))
-            interfaceBuilder.addDnsServer(InetAddress.getByName("1.0.0.1"))
+        // DNS: Use the user-selected DNS provider
+        val (primaryDns, secondaryDns) = when (dnsProvider) {
+            "google" -> "8.8.8.8" to "8.8.4.4"
+            "quad9" -> "9.9.9.9" to "149.112.112.112"
+            else -> "1.1.1.1" to "1.0.0.1" // cloudflare (default)
+        }
+
+        interfaceBuilder.addDnsServer(InetAddress.getByName(primaryDns))
+        if (!killSwitch) {
+            // With kill switch, use only primary DNS to prevent leaks
+            interfaceBuilder.addDnsServer(InetAddress.getByName(secondaryDns))
         }
 
         val wgInterface = interfaceBuilder.build()
@@ -164,18 +193,24 @@ class VpnManager @Inject constructor(private val context: Context) {
             .build()
     }
 
-    suspend fun toggleTunnel(killSwitch: Boolean = false): Result<Tunnel.State> {
+    suspend fun toggleTunnel(killSwitch: Boolean = false, dnsProvider: String = "cloudflare"): Result<Tunnel.State> {
         return withContext(Dispatchers.IO) {
             try {
-                val config = buildConfig(killSwitch)
-                    ?: return@withContext Result.failure(Exception("No config — register device first"))
+                val config = buildConfig(killSwitch, dnsProvider)
+                    ?: return@withContext Result.failure(Exception("No config \u2014 register device first"))
 
                 if (currentTunnel == null) {
                     currentTunnel = SovereignTunnel("sovereign-shield")
                 }
 
                 val tunnel = currentTunnel!!
-                val newState = backend.setState(tunnel, Tunnel.State.TOGGLE, config)
+
+                // Determine desired state explicitly instead of using TOGGLE.
+                // TOGGLE can race if called rapidly, causing flicker between UP/DOWN.
+                val currentState = try { backend.getState(tunnel) } catch (_: Exception) { Tunnel.State.DOWN }
+                val desiredState = if (currentState == Tunnel.State.UP) Tunnel.State.DOWN else Tunnel.State.UP
+
+                val newState = backend.setState(tunnel, desiredState, config)
 
                 if (newState == Tunnel.State.UP) {
                     connectionStartTime = System.currentTimeMillis()

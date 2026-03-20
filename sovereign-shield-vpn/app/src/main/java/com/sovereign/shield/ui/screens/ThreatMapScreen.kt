@@ -36,7 +36,7 @@ import kotlin.math.*
 @Composable
 fun ThreatMapScreen() {
     val context = LocalContext.current
-    val vpnManager = remember { VpnManager(context) }
+    val vpnManager = remember { VpnManager.getInstance(context) }
     val isConnected = vpnManager.getTunnelState() == Tunnel.State.UP
     val serverIp = vpnManager.getServerIp() ?: "35.206.67.49"
 

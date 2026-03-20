@@ -47,7 +47,7 @@ object AppModule {
     @Provides
     @Singleton
     fun provideVpnManager(@ApplicationContext context: Context): VpnManager {
-        return VpnManager(context)
+        return VpnManager.getInstance(context)
     }
 
     @Provides

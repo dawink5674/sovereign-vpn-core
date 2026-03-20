@@ -97,6 +97,18 @@ class NetworkMonitor private constructor(private val context: Context) {
     fun stopMonitoring() {
         monitorJob?.cancel()
         monitorJob = null
+        // Persist session bytes to encrypted storage for lifetime stats
+        val sessionRx = _rxBytes.value
+        val sessionTx = _txBytes.value
+        if (sessionRx > 0 || sessionTx > 0) {
+            try {
+                val prefs = com.sovereign.shield.crypto.EncryptedPrefs(context)
+                prefs.storeTotalBytesTransferred(sessionRx, sessionTx)
+                addLog("Session data persisted: ↓${formatBytes(sessionRx)} ↑${formatBytes(sessionTx)}", LogType.INFO)
+            } catch (e: Exception) {
+                addLog("Failed to persist session data: ${e.message}", LogType.ERROR)
+            }
+        }
         addLog("Monitoring stopped", LogType.INFO)
     }
 
@@ -106,9 +118,12 @@ class NetworkMonitor private constructor(private val context: Context) {
         var totalRx = 0L
         var totalTx = 0L
 
+        // WireGuard stats are from the tunnel interface's perspective:
+        // rxBytes = bytes received FROM the peer (i.e. downloaded by user)
+        // txBytes = bytes sent TO the peer (i.e. uploaded by user)
         stats.peers().forEach { key ->
-            totalRx += stats.peer(key)?.txBytes ?: 0
-            totalTx += stats.peer(key)?.rxBytes ?: 0
+            totalRx += stats.peer(key)?.rxBytes ?: 0
+            totalTx += stats.peer(key)?.txBytes ?: 0
 
             stats.peer(key)?.latestHandshakeEpochMillis?.let { ms ->
                 if (ms > 0) {

@@ -27,8 +27,15 @@ import com.sovereign.shield.ui.components.*
 import com.sovereign.shield.ui.theme.*
 import com.sovereign.shield.vpn.NetworkMonitor
 import com.sovereign.shield.vpn.VpnManager
+import com.sovereign.shield.vpn.VpnSettings
 import com.wireguard.android.backend.Tunnel
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Main Dashboard Screen — the heart of Sovereign Shield.
@@ -43,9 +50,16 @@ fun DashboardScreen(
     onNavigateToLog: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val vpnManager = remember { VpnManager(context) }
+    val vpnManager = remember { VpnManager.getInstance(context) }
     val networkMonitor = remember { NetworkMonitor.getInstance(context) }
+    val vpnSettings = remember { VpnSettings(context) }
     val scope = rememberCoroutineScope()
+
+    // Collect user settings
+    val killSwitch by vpnSettings.killSwitch.collectAsState(initial = false)
+    val autoConnect by vpnSettings.autoConnect.collectAsState(initial = false)
+    val autoReconnect by vpnSettings.autoReconnect.collectAsState(initial = true)
+    val dnsProvider by vpnSettings.dnsProvider.collectAsState(initial = "cloudflare")
 
     val initialState = remember { vpnManager.getTunnelState() }
     var vpnState by remember { mutableStateOf(initialState) }
@@ -53,10 +67,40 @@ fun DashboardScreen(
         mutableStateOf(if (initialState == Tunnel.State.UP) "Connected" else "Disconnected")
     }
     var isRegistered by remember { mutableStateOf(vpnManager.isRegistered()) }
+    // Mutex prevents multiple simultaneous toggle/register operations
+    val toggleMutex = remember { Mutex() }
+    var isActionInProgress by remember { mutableStateOf(false) }
+
+    // Collect notification setting
+    val notifyOnStateChange by vpnSettings.notifyOnStateChange.collectAsState(initial = true)
+
+    // Helper to send state-change notification
+    fun sendStateNotification(connected: Boolean) {
+        if (!notifyOnStateChange) return
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    "vpn_state", "VPN State", NotificationManager.IMPORTANCE_LOW
+                ).apply { description = "VPN connection state changes" }
+                nm.createNotificationChannel(channel)
+            }
+            val title = if (connected) "VPN Connected" else "VPN Disconnected"
+            val text = if (connected) "Sovereign Shield is protecting your connection"
+                       else "Your connection is no longer tunneled"
+            val notification = NotificationCompat.Builder(context, "vpn_state")
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(9001, notification)
+        } catch (_: Exception) { /* permission not granted or context issue */ }
+    }
 
     val serverIp = remember(vpnState) { vpnManager.getServerIp() ?: "35.206.67.49" }
     val isConnected = vpnState == Tunnel.State.UP
-    val isConnecting = statusMessage.contains("Connecting") || statusMessage.contains("Registering") || statusMessage.contains("Securing")
+    val isConnecting = isActionInProgress
 
     var preVpnUserLoc by remember { mutableStateOf<GeoIpResponse?>(null) }
 
@@ -125,57 +169,130 @@ fun DashboardScreen(
         return null
     }
 
+    // Auto-connect on first composition if enabled and registered
+    LaunchedEffect(autoConnect, isRegistered) {
+        if (autoConnect && isRegistered && vpnState == Tunnel.State.DOWN && !isActionInProgress) {
+            delay(500) // Brief delay to let UI settle
+            statusMessage = "Auto-connecting..."
+            val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
+            if (result.isSuccess) {
+                val newState = result.getOrNull() ?: Tunnel.State.DOWN
+                vpnState = newState
+                statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Disconnected"
+                if (newState == Tunnel.State.UP) {
+                    vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+                }
+            }
+        }
+    }
+
+    // Auto-reconnect: monitor connection state and reconnect on unexpected drops
+    LaunchedEffect(autoReconnect, vpnState) {
+        if (autoReconnect && isRegistered && vpnState == Tunnel.State.UP) {
+            // Poll for unexpected drops while connected
+            while (true) {
+                delay(5000)
+                val actualState = vpnManager.getTunnelState()
+                if (actualState == Tunnel.State.DOWN && vpnState == Tunnel.State.UP && !isActionInProgress) {
+                    // Unexpected drop detected
+                    networkMonitor.addLog("Connection dropped — auto-reconnecting", NetworkMonitor.LogType.NETWORK)
+                    statusMessage = "Reconnecting..."
+                    isActionInProgress = true
+                    try {
+                        val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
+                        if (result.isSuccess) {
+                            val newState = result.getOrNull() ?: Tunnel.State.DOWN
+                            vpnState = newState
+                            statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Reconnect failed"
+                            if (newState == Tunnel.State.UP) {
+                                vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
+                            }
+                        } else {
+                            statusMessage = "Reconnect failed"
+                            vpnState = Tunnel.State.DOWN
+                        }
+                    } finally {
+                        isActionInProgress = false
+                    }
+                    break // Exit loop, LaunchedEffect will restart if state changes
+                }
+            }
+        }
+    }
+
     fun doToggle() {
         scope.launch {
+            if (!toggleMutex.tryLock()) return@launch  // Already in progress, ignore tap
             try {
+                isActionInProgress = true
                 statusMessage = "Securing..."
                 networkMonitor.addLog("Initiating tunnel...", NetworkMonitor.LogType.INFO)
-                val result = vpnManager.toggleTunnel()
+                val result = vpnManager.toggleTunnel(killSwitch, dnsProvider)
                 if (result.isSuccess) {
                     val newState = result.getOrNull() ?: Tunnel.State.DOWN
                     vpnState = newState
                     statusMessage = if (newState == Tunnel.State.UP) "Connected" else "Disconnected"
                     networkMonitor.addLog("Tunnel state: $newState", NetworkMonitor.LogType.INFO)
+                    sendStateNotification(newState == Tunnel.State.UP)
                     if (newState == Tunnel.State.UP) {
                         vpnManager.getCurrentTunnel()?.let { networkMonitor.startMonitoring(it) }
                     } else {
                         networkMonitor.stopMonitoring()
                     }
                 } else {
+                    vpnState = vpnManager.getTunnelState()
                     statusMessage = "Error: ${result.exceptionOrNull()?.message}"
                     networkMonitor.addLog("ERROR: ${result.exceptionOrNull()?.message}", NetworkMonitor.LogType.ERROR)
                 }
             } catch (e: Exception) {
+                vpnState = vpnManager.getTunnelState()
                 statusMessage = "Error: ${e.message}"
+            } finally {
+                isActionInProgress = false
+                toggleMutex.unlock()
             }
         }
     }
 
     val handleConnect: () -> Unit = {
-        try {
-            val activity = context.findActivity()
-            if (activity != null) {
-                val prepareIntent = vpnManager.prepareVpn(activity)
-                if (prepareIntent != null) {
-                    statusMessage = "Requesting permission..."
-                    onRequestVpnPermission?.invoke(prepareIntent) { granted ->
-                        if (granted) doToggle()
-                        else statusMessage = "VPN permission denied"
-                    }
-                } else doToggle()
-            } else statusMessage = "Error: no activity context"
-        } catch (e: Exception) { statusMessage = "Error: ${e.message}" }
+        if (!isActionInProgress) {
+            try {
+                val activity = context.findActivity()
+                if (activity != null) {
+                    val prepareIntent = vpnManager.prepareVpn(activity)
+                    if (prepareIntent != null) {
+                        statusMessage = "Requesting permission..."
+                        onRequestVpnPermission?.invoke(prepareIntent) { granted ->
+                            if (granted) doToggle()
+                            else {
+                                statusMessage = "VPN permission denied"
+                                isActionInProgress = false
+                            }
+                        }
+                    } else doToggle()
+                } else statusMessage = "Error: no activity context"
+            } catch (e: Exception) { statusMessage = "Error: ${e.message}" }
+        }
     }
 
     val handleRegister: () -> Unit = {
-        scope.launch {
-            statusMessage = "Registering..."
-            val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
-            if (result.isSuccess) {
-                isRegistered = true
-                statusMessage = "Registered — Ready"
-            } else {
-                statusMessage = "Registration failed"
+        if (!isActionInProgress) {
+            scope.launch {
+                if (!toggleMutex.tryLock()) return@launch
+                try {
+                    isActionInProgress = true
+                    statusMessage = "Registering..."
+                    val result = vpnManager.registerDevice("Pixel 10 Pro Fold")
+                    if (result.isSuccess) {
+                        isRegistered = true
+                        statusMessage = "Registered — Ready"
+                    } else {
+                        statusMessage = "Registration failed: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                    }
+                } finally {
+                    isActionInProgress = false
+                    toggleMutex.unlock()
+                }
             }
         }
     }
