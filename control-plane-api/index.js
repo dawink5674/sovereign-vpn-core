@@ -20,6 +20,30 @@ const WG_INTERFACE = process.env.WG_INTERFACE || 'wg0';
 
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Require Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const apiKey = process.env.ADMIN_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY is not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header is missing' });
+  }
+
+  const expectedBuffer = Buffer.from(apiKey);
+  const providedBuffer = Buffer.from(providedKey);
+
+  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return res.status(403).json({ error: 'Forbidden: Invalid API Key' });
+  }
+
+  next();
+}
+
 // In-memory peer store (replace with Firestore in production)
 const peers = new Map();
 let nextIP = 2; // .1 is the server
@@ -141,6 +165,8 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.use('/api/peers', requireAuth);
 
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
