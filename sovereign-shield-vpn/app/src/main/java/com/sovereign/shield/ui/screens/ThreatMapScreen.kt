@@ -407,13 +407,14 @@ private fun Globe3DCanvas(
             drawPath(path, Color(0xFF0F2340).copy(alpha = 0.6f), style = Stroke(0.5f))
         }
 
-        // --- 4. CONTINENT OUTLINES ---
-        // Simplified continent boundary polygons drawn as connected lines
+        // --- 4. CONTINENT OUTLINES (Natural Earth data) ---
         val continents = getContinentOutlines()
         for (continent in continents) {
-            val path = Path()
+            val fillPath = Path()
+            val strokePath = Path()
             var started = false
             var prevPt: Offset? = null
+            var visibleCount = 0
             for (i in continent.indices step 2) {
                 if (i + 1 >= continent.size) break
                 val lat = continent[i]
@@ -421,19 +422,25 @@ private fun Globe3DCanvas(
                 val pt = projectGlobe(lat.toDouble(), lon.toDouble())
                 if (pt != null) {
                     if (!started) {
-                        path.moveTo(pt.x, pt.y)
+                        fillPath.moveTo(pt.x, pt.y)
+                        strokePath.moveTo(pt.x, pt.y)
                         started = true
+                        visibleCount = 1
                     } else {
-                        // Only draw if distance isn't too large (avoids wrapping artifacts)
                         if (prevPt != null) {
                             val dist = sqrt((pt.x - prevPt.x).pow(2) + (pt.y - prevPt.y).pow(2))
                             if (dist < radius * 0.8f) {
-                                path.lineTo(pt.x, pt.y)
+                                fillPath.lineTo(pt.x, pt.y)
+                                strokePath.lineTo(pt.x, pt.y)
+                                visibleCount++
                             } else {
-                                path.moveTo(pt.x, pt.y)
+                                fillPath.moveTo(pt.x, pt.y)
+                                strokePath.moveTo(pt.x, pt.y)
                             }
                         } else {
-                            path.lineTo(pt.x, pt.y)
+                            fillPath.lineTo(pt.x, pt.y)
+                            strokePath.lineTo(pt.x, pt.y)
+                            visibleCount++
                         }
                     }
                     prevPt = pt
@@ -442,10 +449,16 @@ private fun Globe3DCanvas(
                     prevPt = null
                 }
             }
+            // Fill land masses with subtle color
+            if (visibleCount >= 3) {
+                fillPath.close()
+                drawPath(fillPath, Color(0xFF0A1E3D).copy(alpha = 0.6f))
+            }
+            // Outline stroke
             drawPath(
-                path,
-                ShieldBlue.copy(alpha = 0.35f),
-                style = Stroke(1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                strokePath,
+                ShieldBlue.copy(alpha = 0.45f),
+                style = Stroke(1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
         }
 
@@ -585,83 +598,6 @@ private fun Globe3DCanvas(
             center = Offset(cx, cy)
         )
     }
-}
-
-// ===========================================================================
-// CONTINENT OUTLINES — Simplified polygon data
-// Format: [lat1, lon1, lat2, lon2, ...]
-// ===========================================================================
-
-private fun getContinentOutlines(): List<FloatArray> {
-    return listOf(
-        // North America
-        floatArrayOf(
-            50f, -125f, 55f, -130f, 60f, -140f, 65f, -165f, 70f, -165f,
-            72f, -155f, 71f, -140f, 70f, -130f, 68f, -110f, 65f, -90f,
-            60f, -80f, 55f, -65f, 50f, -60f, 47f, -65f, 45f, -70f,
-            43f, -80f, 40f, -75f, 35f, -80f, 30f, -85f, 28f, -95f,
-            25f, -100f, 20f, -105f, 18f, -100f, 15f, -92f, 15f, -88f,
-            10f, -85f, 8f, -78f, 10f, -75f, 8f, -73f, 10f, -62f,
-            15f, -75f, 20f, -75f, 20f, -88f, 25f, -90f, 30f, -88f,
-            30f, -82f, 35f, -75f, 40f, -72f, 45f, -65f, 48f, -55f,
-            52f, -55f, 55f, -60f, 60f, -65f, 55f, -80f, 50f, -90f,
-            48f, -95f, 50f, -100f, 50f, -110f, 50f, -120f, 50f, -125f
-        ),
-        // South America
-        floatArrayOf(
-            12f, -72f, 10f, -68f, 8f, -62f, 5f, -60f, 2f, -50f,
-            0f, -50f, -5f, -35f, -10f, -37f, -15f, -40f, -20f, -42f,
-            -23f, -45f, -25f, -48f, -30f, -50f, -35f, -57f, -40f, -62f,
-            -45f, -65f, -50f, -70f, -55f, -68f, -52f, -72f, -48f, -75f,
-            -42f, -73f, -37f, -73f, -30f, -72f, -25f, -70f, -18f, -70f,
-            -15f, -75f, -10f, -78f, -5f, -80f, 0f, -78f, 5f, -77f,
-            8f, -77f, 12f, -72f
-        ),
-        // Europe
-        floatArrayOf(
-            36f, -8f, 38f, -5f, 40f, 0f, 43f, 3f, 45f, 7f,
-            44f, 12f, 42f, 15f, 40f, 18f, 38f, 23f, 40f, 26f,
-            42f, 28f, 44f, 28f, 46f, 30f, 48f, 25f, 50f, 20f,
-            52f, 15f, 54f, 10f, 55f, 8f, 58f, 5f, 60f, 5f,
-            62f, 6f, 65f, 12f, 68f, 16f, 70f, 25f, 70f, 30f,
-            68f, 35f, 65f, 30f, 60f, 30f, 58f, 28f, 55f, 22f,
-            52f, 20f, 50f, 12f, 48f, 8f, 46f, 2f, 44f, -2f,
-            42f, -5f, 38f, -8f, 36f, -8f
-        ),
-        // Africa
-        floatArrayOf(
-            35f, -5f, 37f, 10f, 33f, 12f, 30f, 10f, 25f, 33f,
-            20f, 37f, 15f, 42f, 12f, 44f, 10f, 50f, 5f, 42f,
-            0f, 42f, -5f, 40f, -10f, 40f, -15f, 35f, -20f, 35f,
-            -25f, 32f, -30f, 30f, -33f, 27f, -35f, 20f, -33f, 18f,
-            -30f, 17f, -25f, 15f, -20f, 12f, -15f, 12f, -10f, 8f,
-            -5f, 10f, 0f, 10f, 5f, 2f, 5f, -5f, 5f, -10f,
-            10f, -15f, 15f, -17f, 20f, -17f, 25f, -15f, 30f, -10f,
-            35f, -5f
-        ),
-        // Asia
-        floatArrayOf(
-            42f, 30f, 45f, 40f, 42f, 45f, 40f, 50f, 38f, 55f,
-            35f, 55f, 30f, 50f, 25f, 55f, 23f, 58f, 20f, 60f,
-            15f, 70f, 10f, 78f, 8f, 78f, 15f, 80f, 20f, 88f,
-            22f, 90f, 25f, 95f, 20f, 100f, 15f, 100f, 10f, 105f,
-            5f, 103f, 0f, 105f, -5f, 110f, -8f, 115f, -5f, 120f,
-            5f, 120f, 10f, 118f, 20f, 110f, 22f, 120f, 30f, 122f,
-            35f, 130f, 40f, 130f, 42f, 132f, 45f, 140f, 50f, 143f,
-            55f, 140f, 58f, 142f, 60f, 150f, 62f, 160f, 65f, 170f,
-            68f, 175f, 70f, 180f, 72f, 170f, 70f, 140f, 68f, 130f,
-            65f, 120f, 60f, 100f, 55f, 80f, 55f, 70f, 50f, 60f,
-            52f, 50f, 50f, 40f, 45f, 35f, 42f, 30f
-        ),
-        // Australia
-        floatArrayOf(
-            -12f, 130f, -15f, 125f, -18f, 122f, -22f, 114f, -25f, 114f,
-            -30f, 115f, -33f, 115f, -35f, 118f, -35f, 122f, -35f, 135f,
-            -37f, 140f, -38f, 145f, -37f, 150f, -34f, 151f, -30f, 153f,
-            -25f, 152f, -20f, 148f, -17f, 146f, -15f, 143f, -12f, 142f,
-            -12f, 137f, -14f, 135f, -12f, 130f
-        )
-    )
 }
 
 // ===========================================================================
