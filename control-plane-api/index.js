@@ -263,8 +263,12 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Control Plane API listening on port ${PORT}`);
-  console.log(`Zero-Trust mode: clients generate their own keys`);
-  console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Control Plane API listening on port ${PORT}`);
+    console.log(`Zero-Trust mode: clients generate their own keys`);
+    console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
+  });
+}
+
+module.exports = { app, peers };
