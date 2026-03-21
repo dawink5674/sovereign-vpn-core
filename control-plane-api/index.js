@@ -25,6 +25,39 @@ const peers = new Map();
 let nextIP = 2; // .1 is the server
 
 // ---------------------------------------------------------------------------
+// Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Missing X-API-Key header' });
+  }
+
+  try {
+    const valid = crypto.timingSafeEqual(
+      Buffer.from(providedKey),
+      Buffer.from(adminApiKey)
+    );
+
+    if (valid) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Invalid API key' });
+    }
+  } catch (err) {
+    // This happens if lengths don't match (timingSafeEqual requires same length)
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SSH helper — execute a command on the WireGuard server
 // ---------------------------------------------------------------------------
 function sshExec(command, stdinData = null) {
@@ -151,7 +184,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +257,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +271,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
@@ -263,8 +296,12 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Control Plane API listening on port ${PORT}`);
-  console.log(`Zero-Trust mode: clients generate their own keys`);
-  console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Control Plane API listening on port ${PORT}`);
+    console.log(`Zero-Trust mode: clients generate their own keys`);
+    console.log(`SSH auto-apply: ${WG_SSH_KEY ? 'ENABLED' : 'DISABLED (set WG_SSH_KEY to enable)'}`);
+  });
+}
+
+module.exports = { app, peers };
