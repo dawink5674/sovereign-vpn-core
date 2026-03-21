@@ -20,6 +20,32 @@ const WG_INTERFACE = process.env.WG_INTERFACE || 'wg0';
 
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireApiKey(req, res, next) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY is not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header is missing' });
+  }
+
+  const adminApiKeyBuffer = Buffer.from(adminApiKey);
+  const providedKeyBuffer = Buffer.from(providedKey);
+
+  if (adminApiKeyBuffer.length !== providedKeyBuffer.length ||
+      !crypto.timingSafeEqual(adminApiKeyBuffer, providedKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
+  }
+
+  next();
+}
+
 // In-memory peer store (replace with Firestore in production)
 const peers = new Map();
 let nextIP = 2; // .1 is the server
@@ -151,7 +177,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireApiKey, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +250,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireApiKey, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +264,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireApiKey, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
