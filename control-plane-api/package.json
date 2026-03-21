@@ -8,8 +8,9 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "ssh2": "^1.16.0"
+    "express": "^4.22.1",
+    "ssh2": "^1.16.0",
+    "supertest": "^7.2.2"
   },
   "engines": {
     "node": ">=20.0.0"
