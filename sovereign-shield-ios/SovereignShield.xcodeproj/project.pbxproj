@@ -1,0 +1,663 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10001001 /* SovereignShieldApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001000 /* SovereignShieldApp.swift */; };
+		A10002001 /* ApiModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10002000 /* ApiModels.swift */; };
+		A10003001 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10003000 /* ApiClient.swift */; };
+		A10004001 /* GeoIpClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10004000 /* GeoIpClient.swift */; };
+		A10005001 /* CryptoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10005000 /* CryptoManager.swift */; };
+		A10006001 /* VPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10006000 /* VPNManager.swift */; };
+		A10007001 /* VPNSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10007000 /* VPNSettings.swift */; };
+		A10008001 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10008000 /* DashboardView.swift */; };
+		A10009001 /* GlobeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10009000 /* GlobeView.swift */; };
+		A10010001 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10010000 /* StatsView.swift */; };
+		A10011001 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10011000 /* LogView.swift */; };
+		A10012001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10012000 /* SettingsView.swift */; };
+		A10013001 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10013000 /* GlassCard.swift */; };
+		A10014001 /* ShieldButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10014000 /* ShieldButton.swift */; };
+		A10015001 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10015000 /* StatusBadge.swift */; };
+		A10016001 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10016000 /* Theme.swift */; };
+		A10020001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10020000 /* PacketTunnelProvider.swift */; };
+		A10030001 /* WireGuardKit in Frameworks */ = {isa = PBXBuildFile; productRef = A10030000 /* WireGuardKit */; };
+		A10031001 /* WireGuardKit in Frameworks */ = {isa = PBXBuildFile; productRef = A10031000 /* WireGuardKit */; };
+		A10040001 /* WireGuardExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A10040000 /* WireGuardExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10050000 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10060000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10070000;
+			remoteInfo = WireGuardExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10080000 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10040001 /* WireGuardExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		A10001000 /* SovereignShieldApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SovereignShieldApp.swift; sourceTree = "<group>"; };
+		A10002000 /* ApiModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiModels.swift; sourceTree = "<group>"; };
+		A10003000 /* ApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiClient.swift; sourceTree = "<group>"; };
+		A10004000 /* GeoIpClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoIpClient.swift; sourceTree = "<group>"; };
+		A10005000 /* CryptoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoManager.swift; sourceTree = "<group>"; };
+		A10006000 /* VPNManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPNManager.swift; sourceTree = "<group>"; };
+		A10007000 /* VPNSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPNSettings.swift; sourceTree = "<group>"; };
+		A10008000 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		A10009000 /* GlobeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobeView.swift; sourceTree = "<group>"; };
+		A10010000 /* StatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsView.swift; sourceTree = "<group>"; };
+		A10011000 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		A10012000 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A10013000 /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
+		A10014000 /* ShieldButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldButton.swift; sourceTree = "<group>"; };
+		A10015000 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
+		A10016000 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		A10017000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10018000 /* SovereignShield.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SovereignShield.entitlements; sourceTree = "<group>"; };
+		A10019000 /* SovereignShield.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SovereignShield.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10020000 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		A10021000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10022000 /* WireGuardExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WireGuardExtension.entitlements; sourceTree = "<group>"; };
+		A10040000 /* WireGuardExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WireGuardExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10090000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10031001 /* WireGuardKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10090001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10030001 /* WireGuardKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10100000 = {
+			isa = PBXGroup;
+			children = (
+				A10100001 /* SovereignShield */,
+				A10100002 /* WireGuardExtension */,
+				A10100003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10100001 /* SovereignShield */ = {
+			isa = PBXGroup;
+			children = (
+				A10100010 /* App */,
+				A10100011 /* Models */,
+				A10100012 /* Network */,
+				A10100013 /* Crypto */,
+				A10100014 /* VPN */,
+				A10100015 /* Views */,
+				A10100016 /* Theme */,
+				A10017000 /* Info.plist */,
+				A10018000 /* SovereignShield.entitlements */,
+			);
+			path = SovereignShield;
+			sourceTree = "<group>";
+		};
+		A10100002 /* WireGuardExtension */ = {
+			isa = PBXGroup;
+			children = (
+				A10020000 /* PacketTunnelProvider.swift */,
+				A10021000 /* Info.plist */,
+				A10022000 /* WireGuardExtension.entitlements */,
+			);
+			path = WireGuardExtension;
+			sourceTree = "<group>";
+		};
+		A10100003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10019000 /* SovereignShield.app */,
+				A10040000 /* WireGuardExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10100010 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10001000 /* SovereignShieldApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A10100011 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A10002000 /* ApiModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A10100012 /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				A10003000 /* ApiClient.swift */,
+				A10004000 /* GeoIpClient.swift */,
+			);
+			path = Network;
+			sourceTree = "<group>";
+		};
+		A10100013 /* Crypto */ = {
+			isa = PBXGroup;
+			children = (
+				A10005000 /* CryptoManager.swift */,
+			);
+			path = Crypto;
+			sourceTree = "<group>";
+		};
+		A10100014 /* VPN */ = {
+			isa = PBXGroup;
+			children = (
+				A10006000 /* VPNManager.swift */,
+				A10007000 /* VPNSettings.swift */,
+			);
+			path = VPN;
+			sourceTree = "<group>";
+		};
+		A10100015 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A10008000 /* DashboardView.swift */,
+				A10009000 /* GlobeView.swift */,
+				A10010000 /* StatsView.swift */,
+				A10011000 /* LogView.swift */,
+				A10012000 /* SettingsView.swift */,
+				A10100017 /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A10100016 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				A10016000 /* Theme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		A10100017 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				A10013000 /* GlassCard.swift */,
+				A10014000 /* ShieldButton.swift */,
+				A10015000 /* StatusBadge.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10110000 /* SovereignShield */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10120000 /* Build configuration list for PBXNativeTarget "SovereignShield" */;
+			buildPhases = (
+				A10130000 /* Sources */,
+				A10090001 /* Frameworks */,
+				A10140000 /* Resources */,
+				A10080000 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10150000 /* PBXTargetDependency */,
+			);
+			name = SovereignShield;
+			packageProductDependencies = (
+				A10031000 /* WireGuardKit */,
+			);
+			productName = SovereignShield;
+			productReference = A10019000 /* SovereignShield.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10070000 /* WireGuardExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10120001 /* Build configuration list for PBXNativeTarget "WireGuardExtension" */;
+			buildPhases = (
+				A10130001 /* Sources */,
+				A10090000 /* Frameworks */,
+				A10140001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WireGuardExtension;
+			packageProductDependencies = (
+				A10030000 /* WireGuardKit */,
+			);
+			productName = WireGuardExtension;
+			productReference = A10040000 /* WireGuardExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10060000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10110000 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					A10070000 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A10120002 /* Build configuration list for PBXProject "SovereignShield" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10100000;
+			packageReferences = (
+				A10160000 /* XCRemoteSwiftPackageReference "wireguard-apple" */,
+			);
+			productRefGroup = A10100003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10110000 /* SovereignShield */,
+				A10070000 /* WireGuardExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10140000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10140001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10130000 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10001001 /* SovereignShieldApp.swift in Sources */,
+				A10002001 /* ApiModels.swift in Sources */,
+				A10003001 /* ApiClient.swift in Sources */,
+				A10004001 /* GeoIpClient.swift in Sources */,
+				A10005001 /* CryptoManager.swift in Sources */,
+				A10006001 /* VPNManager.swift in Sources */,
+				A10007001 /* VPNSettings.swift in Sources */,
+				A10008001 /* DashboardView.swift in Sources */,
+				A10009001 /* GlobeView.swift in Sources */,
+				A10010001 /* StatsView.swift in Sources */,
+				A10011001 /* LogView.swift in Sources */,
+				A10012001 /* SettingsView.swift in Sources */,
+				A10013001 /* GlassCard.swift in Sources */,
+				A10014001 /* ShieldButton.swift in Sources */,
+				A10015001 /* StatusBadge.swift in Sources */,
+				A10016001 /* Theme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10130001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10020001 /* PacketTunnelProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10150000 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10070000 /* WireGuardExtension */;
+			targetProxy = A10050000 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10170000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A10170001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A10180000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SovereignShield/SovereignShield.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SovereignShield/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Sovereign Shield";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sovereign.shield;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A10180001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SovereignShield/SovereignShield.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SovereignShield/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Sovereign Shield";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sovereign.shield;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A10190000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WireGuardExtension/WireGuardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WireGuardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Sovereign Shield Tunnel";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.sovereign.shield.wireguard-extension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A10190001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WireGuardExtension/WireGuardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WireGuardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Sovereign Shield Tunnel";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.sovereign.shield.wireguard-extension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10120000 /* Build configuration list for PBXNativeTarget "SovereignShield" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10180000 /* Debug */,
+				A10180001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10120001 /* Build configuration list for PBXNativeTarget "WireGuardExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10190000 /* Debug */,
+				A10190001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10120002 /* Build configuration list for PBXProject "SovereignShield" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10170000 /* Debug */,
+				A10170001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A10160000 /* XCRemoteSwiftPackageReference "wireguard-apple" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/WireGuard/wireguard-apple";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10030000 /* WireGuardKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10160000 /* XCRemoteSwiftPackageReference "wireguard-apple" */;
+			productName = WireGuardKit;
+		};
+		A10031000 /* WireGuardKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10160000 /* XCRemoteSwiftPackageReference "wireguard-apple" */;
+			productName = WireGuardKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = A10060000 /* Project object */;
+}
