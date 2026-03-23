@@ -130,6 +130,30 @@ async function removePeerFromServer(publicKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Authentication middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY not set' });
+  }
+
+  const clientKey = req.header('X-API-Key');
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header missing' });
+  }
+
+  const adminKeyBuffer = Buffer.from(adminKey);
+  const clientKeyBuffer = Buffer.from(clientKey);
+
+  if (adminKeyBuffer.length !== clientKeyBuffer.length || !crypto.timingSafeEqual(adminKeyBuffer, clientKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+
+  next();
+}
+
+// ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
 // ---------------------------------------------------------------------------
 app.get('/api/health', (_req, res) => {
@@ -141,6 +165,9 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// Apply authentication to all /api/peers endpoints
+app.use('/api/peers', requireAuth);
 
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
