@@ -143,6 +143,38 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+
+  // Fail-closed security posture
+  if (!adminApiKey) {
+    console.error('CRITICAL: ADMIN_API_KEY environment variable is not set.');
+    return res.status(500).json({ error: 'Server misconfiguration: Authentication is unavailable.' });
+  }
+
+  const providedKey = req.headers['x-api-key'];
+
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Authentication required. Missing X-API-Key header.' });
+  }
+
+  const expectedKeyBuffer = Buffer.from(adminApiKey, 'utf-8');
+  const providedKeyBuffer = Buffer.from(providedKey, 'utf-8');
+
+  // Mitigate timing attacks by ensuring equal length before using timingSafeEqual
+  if (expectedKeyBuffer.length !== providedKeyBuffer.length ||
+      !crypto.timingSafeEqual(expectedKeyBuffer, providedKeyBuffer)) {
+    return res.status(403).json({ error: 'Forbidden: Invalid API Key.' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', requireAuth);
+
+// ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
 // The client generates its own keypair locally and sends ONLY the public key.
