@@ -142,6 +142,33 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Authentication middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  const clientKey = req.header('X-API-Key');
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const adminKeyBuffer = Buffer.from(adminKey);
+  const clientKeyBuffer = Buffer.from(clientKey);
+
+  if (adminKeyBuffer.length !== clientKeyBuffer.length || !crypto.timingSafeEqual(adminKeyBuffer, clientKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', requireAuth);
+
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
