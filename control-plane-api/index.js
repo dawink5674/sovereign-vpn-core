@@ -130,6 +130,30 @@ async function removePeerFromServer(publicKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Auth middleware
+// ---------------------------------------------------------------------------
+const requireAuth = (req, res, next) => {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY is not set' });
+  }
+
+  const apiKeyHeader = req.get('X-API-Key');
+  if (!apiKeyHeader) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header is missing' });
+  }
+
+  const expectedBuffer = Buffer.from(adminApiKey);
+  const actualBuffer = Buffer.from(apiKeyHeader);
+
+  if (expectedBuffer.length !== actualBuffer.length || !crypto.timingSafeEqual(expectedBuffer, actualBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
+  }
+
+  next();
+};
+
+// ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
 // ---------------------------------------------------------------------------
 app.get('/api/health', (_req, res) => {
@@ -141,6 +165,11 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// ---------------------------------------------------------------------------
+// Apply Auth Middleware to all /api/peers routes
+// ---------------------------------------------------------------------------
+app.use('/api/peers', requireAuth);
 
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
@@ -225,12 +254,11 @@ app.post('/api/peers', async (req, res) => {
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
 app.get('/api/peers', (_req, res) => {
-  const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
-    name,
-    publicKey,
-    assignedIP,
-    createdAt,
-  }));
+  const peerList = new Array(peers.size);
+  let i = 0;
+  for (const { name, publicKey, assignedIP, createdAt } of peers.values()) {
+    peerList[i++] = { name, publicKey, assignedIP, createdAt };
+  }
 
   res.status(200).json({ count: peerList.length, peers: peerList });
 });
