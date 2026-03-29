@@ -25,6 +25,33 @@ const peers = new Map();
 let nextIP = 2; // .1 is the server
 
 // ---------------------------------------------------------------------------
+// Authentication middleware — protect sensitive endpoints
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const providedKey = req.header('X-API-Key') || '';
+  const expectedKey = process.env.ADMIN_API_KEY || '';
+
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Missing X-API-Key header' });
+  }
+
+  if (!expectedKey) {
+    console.error('CRITICAL: ADMIN_API_KEY is not set in the environment');
+    return res.status(500).json({ error: 'Server misconfiguration' });
+  }
+
+  const providedBuffer = Buffer.from(providedKey);
+  const expectedBuffer = Buffer.from(expectedKey);
+
+  // Use timingSafeEqual to prevent timing attacks
+  if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+
+  next();
+}
+
+// ---------------------------------------------------------------------------
 // SSH helper — execute a command on the WireGuard server
 // ---------------------------------------------------------------------------
 function sshExec(command, stdinData = null) {
@@ -141,6 +168,8 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.use('/api/peers', requireAuth);
 
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
