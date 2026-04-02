@@ -143,6 +143,32 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Authentication middleware for peer endpoints
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  const apiKey = req.header('X-API-Key');
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const adminKeyBuf = Buffer.from(adminKey);
+  const apiKeyBuf = Buffer.from(apiKey);
+
+  if (adminKeyBuf.length !== apiKeyBuf.length || !crypto.timingSafeEqual(adminKeyBuf, apiKeyBuf)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  next();
+}
+
+app.use('/api/peers', requireAuth);
+
+// ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
 // The client generates its own keypair locally and sends ONLY the public key.
