@@ -1,0 +1,1 @@
+I am modifying control-plane-api/index.js because the /api/peers endpoints lack authentication, allowing unauthorized users to list active peers and map the internal VPN topology. I will preserve existing Express and route handling patterns.
