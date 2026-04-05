@@ -129,6 +129,33 @@ async function removePeerFromServer(publicKey) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Authentication middleware
+// ---------------------------------------------------------------------------
+const requireAuth = (req, res, next) => {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY not set' });
+  }
+
+  const clientApiKey = req.header('X-API-Key');
+  if (!clientApiKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  const adminBuffer = Buffer.from(adminApiKey, 'utf8');
+  const clientBuffer = Buffer.from(clientApiKey, 'utf8');
+
+  if (adminBuffer.length !== clientBuffer.length || !crypto.timingSafeEqual(adminBuffer, clientBuffer)) {
+    return res.status(403).json({ error: 'Forbidden: Invalid API Key' });
+  }
+
+  next();
+};
+
+app.use('/api/peers', requireAuth);
+
 // ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
 // ---------------------------------------------------------------------------
