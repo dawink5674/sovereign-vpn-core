@@ -142,6 +142,21 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+const requireAuth = (req, res, next) => {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error: ADMIN_API_KEY not set' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey || providedKey.length !== adminKey.length || !crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(adminKey))) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' });
+  }
+  next();
+};
+
+app.use('/api/peers', requireAuth);
+
 // ---------------------------------------------------------------------------
 // POST /api/peers — Zero-Trust peer provisioning
 //
