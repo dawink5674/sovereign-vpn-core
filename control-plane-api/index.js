@@ -132,6 +132,54 @@ async function removePeerFromServer(publicKey) {
 // ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Require Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  const clientKey = req.header('X-API-Key');
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const expectedBuffer = Buffer.from(adminKey);
+  const actualBuffer = Buffer.from(clientKey);
+
+  if (expectedBuffer.length !== actualBuffer.length || !crypto.timingSafeEqual(expectedBuffer, actualBuffer)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  next();
+}
+
+// ---------------------------------------------------------------------------
+// Require Authentication Middleware
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  const clientKey = req.header('X-API-Key');
+  if (!clientKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const expectedBuffer = Buffer.from(adminKey);
+  const actualBuffer = Buffer.from(clientKey);
+
+  if (expectedBuffer.length !== actualBuffer.length || !crypto.timingSafeEqual(expectedBuffer, actualBuffer)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  next();
+}
+
 app.get('/api/health', (_req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -151,7 +199,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +272,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +286,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
