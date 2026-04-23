@@ -20,6 +20,31 @@ const WG_INTERFACE = process.env.WG_INTERFACE || 'wg0';
 
 app.use(express.json());
 
+
+// ---------------------------------------------------------------------------
+// Authentication middleware for admin endpoints
+// ---------------------------------------------------------------------------
+const requireAuth = (req, res, next) => {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey) {
+    return res.status(500).json({ error: 'Server misconfiguration: ADMIN_API_KEY not set' });
+  }
+
+  const apiKey = req.header('X-API-Key');
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const providedBuffer = Buffer.from(apiKey, 'utf8');
+  const adminBuffer = Buffer.from(adminApiKey, 'utf8');
+
+  if (providedBuffer.length !== adminBuffer.length || !crypto.timingSafeEqual(providedBuffer, adminBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  next();
+};
+
 // In-memory peer store (replace with Firestore in production)
 const peers = new Map();
 let nextIP = 2; // .1 is the server
@@ -224,7 +249,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
