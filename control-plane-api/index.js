@@ -242,6 +242,11 @@ app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
+  // Strict regex validation for public key format
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(decoded)) {
+    return res.status(400).json({ error: 'Invalid public key format' });
+  }
+
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
   }
