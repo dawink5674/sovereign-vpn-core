@@ -132,6 +132,31 @@ async function removePeerFromServer(publicKey) {
 // ---------------------------------------------------------------------------
 // Health check — Cloud Run readiness probe
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Authentication middleware for administrative endpoints
+// ---------------------------------------------------------------------------
+const requireAuth = (req, res, next) => {
+  const adminApiKey = process.env.ADMIN_API_KEY;
+  if (!adminApiKey) {
+    console.error('CRITICAL: ADMIN_API_KEY is not set. Failing closed.');
+    return res.status(500).json({ error: 'Internal Server Error: Missing configuration' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  const providedKeyBuffer = Buffer.from(providedKey, 'utf8');
+  const expectedKeyBuffer = Buffer.from(adminApiKey, 'utf8');
+
+  if (providedKeyBuffer.length !== expectedKeyBuffer.length || !crypto.timingSafeEqual(providedKeyBuffer, expectedKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid X-API-Key' });
+  }
+
+  next();
+};
+
 app.get('/api/health', (_req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -151,7 +176,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +249,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +263,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
