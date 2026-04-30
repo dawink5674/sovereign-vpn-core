@@ -5,6 +5,32 @@ const { Client } = require('ssh2');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// ---------------------------------------------------------------------------
+// Authentication middleware for administrative endpoints
+// ---------------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) {
+    console.error('ADMIN_API_KEY is not set in the environment');
+    return res.status(500).json({ error: 'Internal server error: Admin API key not configured' });
+  }
+
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: X-API-Key header is missing' });
+  }
+
+  // Use timingSafeEqual to prevent timing attacks, and ensure buffers are of equal length
+  const adminKeyBuffer = Buffer.from(adminKey);
+  const providedKeyBuffer = Buffer.from(providedKey);
+
+  if (adminKeyBuffer.length !== providedKeyBuffer.length || !crypto.timingSafeEqual(adminKeyBuffer, providedKeyBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+
+  next();
+}
+
 // Server config — in production, pull from Secret Manager
 const SERVER_PUBLIC_KEY = process.env.SERVER_PUBLIC_KEY || 'G1ReQCSgRG/MdfF5/SMrcnU+lKQMlwkr9aIA7/ZK5WI=';
 const SERVER_ENDPOINT = process.env.SERVER_ENDPOINT || '35.206.67.49:51820';
@@ -151,7 +177,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +250,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +264,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
