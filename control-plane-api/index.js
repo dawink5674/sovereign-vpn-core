@@ -10,6 +10,7 @@ const SERVER_PUBLIC_KEY = process.env.SERVER_PUBLIC_KEY || 'G1ReQCSgRG/MdfF5/SMr
 const SERVER_ENDPOINT = process.env.SERVER_ENDPOINT || '35.206.67.49:51820';
 const VPN_SUBNET = '10.66.66';
 const DNS_SERVERS = '1.1.1.1, 1.0.0.1';
+const PUBLIC_KEY_REGEX = /^[A-Za-z0-9+/]{43}=$/;
 
 // SSH config for WireGuard server — set as Cloud Run env vars
 const WG_SSH_HOST = process.env.WG_SSH_HOST || '35.206.67.49';
@@ -89,13 +90,16 @@ function sshExec(command, stdinData = null) {
 // Uses `wg set` which adds the peer without restarting the interface
 // ---------------------------------------------------------------------------
 async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
+  if (!PUBLIC_KEY_REGEX.test(publicKey)) {
+    return { success: false, error: 'Invalid public key format' };
+  }
   try {
     // wg set requires the preshared key via a file/pipe
     // We use a temp file approach: echo key > /tmp/psk && wg set ... && rm /tmp/psk
     const pskFile = `/tmp/psk_${Date.now()}`;
     const commands = [
       `echo '${presharedKey}' > ${pskFile}`,
-      `sudo wg set ${WG_INTERFACE} peer ${publicKey} preshared-key ${pskFile} allowed-ips ${assignedIP}`,
+      `sudo wg set ${WG_INTERFACE} peer '${publicKey}' preshared-key ${pskFile} allowed-ips ${assignedIP}`,
       `rm -f ${pskFile}`,
     ].join(' && ');
 
@@ -119,8 +123,11 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // Remove a peer from the live WireGuard interface via SSH
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
+  if (!PUBLIC_KEY_REGEX.test(publicKey)) {
+    return { success: false, error: 'Invalid public key format' };
+  }
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -161,6 +168,10 @@ app.post('/api/peers', async (req, res) => {
 
     if (!publicKey || typeof publicKey !== 'string') {
       return res.status(400).json({ error: 'Client public key (base64) is required' });
+    }
+
+    if (!PUBLIC_KEY_REGEX.test(publicKey)) {
+      return res.status(400).json({ error: 'Invalid public key format' });
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
@@ -241,6 +252,10 @@ app.get('/api/peers', (_req, res) => {
 app.delete('/api/peers/:publicKey', async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
+
+  if (!PUBLIC_KEY_REGEX.test(decoded)) {
+    return res.status(400).json({ error: 'Invalid public key format' });
+  }
 
   if (!peers.has(decoded)) {
     return res.status(404).json({ error: 'Peer not found' });
