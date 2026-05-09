@@ -90,12 +90,16 @@ function sshExec(command, stdinData = null) {
 // ---------------------------------------------------------------------------
 async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
   try {
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      throw new Error('Invalid public key format');
+    }
+
     // wg set requires the preshared key via a file/pipe
     // We use a temp file approach: echo key > /tmp/psk && wg set ... && rm /tmp/psk
     const pskFile = `/tmp/psk_${Date.now()}`;
     const commands = [
       `echo '${presharedKey}' > ${pskFile}`,
-      `sudo wg set ${WG_INTERFACE} peer ${publicKey} preshared-key ${pskFile} allowed-ips ${assignedIP}`,
+      `sudo wg set ${WG_INTERFACE} peer '${publicKey}' preshared-key ${pskFile} allowed-ips ${assignedIP}`,
       `rm -f ${pskFile}`,
     ].join(' && ');
 
@@ -120,7 +124,10 @@ async function applyPeerToServer(publicKey, presharedKey, assignedIP) {
 // ---------------------------------------------------------------------------
 async function removePeerFromServer(publicKey) {
   try {
-    await sshExec(`sudo wg set ${WG_INTERFACE} peer ${publicKey} remove`);
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      throw new Error('Invalid public key format');
+    }
+    await sshExec(`sudo wg set ${WG_INTERFACE} peer '${publicKey}' remove`);
     console.log(`✅ Peer ${publicKey.substring(0, 8)}... removed from ${WG_INTERFACE}`);
     return { success: true };
   } catch (err) {
@@ -164,6 +171,12 @@ app.post('/api/peers', async (req, res) => {
     }
 
     // Validate base64 key is 44 chars (32 bytes base64-encoded)
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(publicKey)) {
+      return res.status(400).json({
+        error: 'Invalid public key: must be 32 bytes (Curve25519) and valid base64',
+      });
+    }
+
     const keyBuffer = Buffer.from(publicKey, 'base64');
     if (keyBuffer.length !== 32) {
       return res.status(400).json({
