@@ -20,6 +20,30 @@ const WG_INTERFACE = process.env.WG_INTERFACE || 'wg0';
 
 app.use(express.json());
 
+// Ensure API key is configured for admin endpoints
+const API_KEY = process.env.API_KEY;
+if (!API_KEY) {
+  console.error('FATAL: API_KEY environment variable is missing.');
+  process.exit(1);
+}
+
+// Authentication middleware
+function requireAuth(req, res, next) {
+  const providedKey = req.header('X-API-Key');
+  if (!providedKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing X-API-Key header' });
+  }
+
+  const providedBuffer = Buffer.from(providedKey, 'utf-8');
+  const expectedBuffer = Buffer.from(API_KEY, 'utf-8');
+
+  if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
+  }
+
+  next();
+}
+
 // In-memory peer store (replace with Firestore in production)
 const peers = new Map();
 let nextIP = 2; // .1 is the server
@@ -151,7 +175,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +248,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +262,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
