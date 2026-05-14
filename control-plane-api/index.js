@@ -5,6 +5,20 @@ const { Client } = require('ssh2');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+const API_KEY = process.env.API_KEY;
+if (!API_KEY) {
+  console.error('FATAL ERROR: API_KEY environment variable is missing.');
+  process.exit(1);
+}
+
+const requireAuth = (req, res, next) => {
+  const apiKey = req.header('X-API-Key');
+  if (!apiKey || apiKey !== API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+};
+
 // Server config — in production, pull from Secret Manager
 const SERVER_PUBLIC_KEY = process.env.SERVER_PUBLIC_KEY || 'G1ReQCSgRG/MdfF5/SMrcnU+lKQMlwkr9aIA7/ZK5WI=';
 const SERVER_ENDPOINT = process.env.SERVER_ENDPOINT || '35.206.67.49:51820';
@@ -151,7 +165,7 @@ app.get('/api/health', (_req, res) => {
 // After registration, the peer is automatically applied to the WireGuard
 // server via SSH so traffic can flow immediately.
 // ---------------------------------------------------------------------------
-app.post('/api/peers', async (req, res) => {
+app.post('/api/peers', requireAuth, async (req, res) => {
   try {
     const { name, publicKey } = req.body;
 
@@ -224,7 +238,7 @@ app.post('/api/peers', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/peers — List all active peers (no secrets exposed)
 // ---------------------------------------------------------------------------
-app.get('/api/peers', (_req, res) => {
+app.get('/api/peers', requireAuth, (_req, res) => {
   const peerList = Array.from(peers.values()).map(({ name, publicKey, assignedIP, createdAt }) => ({
     name,
     publicKey,
@@ -238,7 +252,7 @@ app.get('/api/peers', (_req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /api/peers/:publicKey — Revoke a peer
 // ---------------------------------------------------------------------------
-app.delete('/api/peers/:publicKey', async (req, res) => {
+app.delete('/api/peers/:publicKey', requireAuth, async (req, res) => {
   const { publicKey } = req.params;
   const decoded = decodeURIComponent(publicKey);
 
